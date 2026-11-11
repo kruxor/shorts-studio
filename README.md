@@ -61,7 +61,6 @@ python3 -m http.server 8099 -d public
 # 443 and 8443 are already taken by tailscaled on this host.
 ```
 
-
 ## Models
 
 Whisper weights are gitignored and reproducible:
@@ -71,9 +70,15 @@ Whisper weights are gitignored and reproducible:
 FETCH_SMALL=1 ./scripts/fetch-models.sh  # also small.en, +242 MB
 ```
 
-The served build ships **base.en only**. small.en costs 242 MB per first-time
-visitor for accuracy that did not matter on English shorts; re-adding it means
-re-adding an entry to `MODELS` in `public/js/transcribe.js` and an `<option>`.
+The served build ships **base.en only**. The weights load lazily, per selected
+model, and only when Transcribe is pressed — so a second option costs server
+disk, not visitor bandwidth, for anyone who leaves base.en selected. It was
+dropped for simplicity and for speed on 4-core hardware (roughly 3x faster than
+small.en), not to save every visitor 242 MB.
+
+Bringing it back means `FETCH_SMALL=1 ./scripts/fetch-models.sh`, one entry in
+`MODELS` in `public/js/transcribe.js`, and one `<option>` in `index.html` — both
+halves, or the picker offers a model that 404s.
 
 The script fetches from the `Xenova/*` repos specifically, and fails loudly if
 the decoder has no cross-attention outputs. This matters: the `openai/whisper-*`
@@ -105,6 +110,20 @@ runtime file, bump its directory name** (`whisper-base.en-v2`, `ort-v2`).
 
 Deploy by copying `public/` behind HTTPS. There is no build step. HTTPS is not
 optional: WebCodecs requires a secure context.
+
+### Publishing to a subdomain
+
+Not done yet; this is the shape of it for `shorts.kruxor.com`:
+
+1. `rsync -a public/ host:/var/www/shorts-studio/public/` — no build step.
+   `public/models/` is gitignored, so it travels with the rsync (77 MB), not git.
+2. Vhost = `deploy/nginx-shorts-studio.conf`, changed to `listen 443 ssl` with a
+   real certificate.
+3. Leave the cache headers alone. The `no-store` they replaced was what made a
+   returning visitor re-download 112 MB.
+4. `E2E_URL=https://shorts.kruxor.com/ node tests/e2e/vhost-boot.mjs` — this is
+   the one that catches a dead page behind a healthy-looking server.
+5. `E2E_URL=https://shorts.kruxor.com/ node tests/e2e/file-drop.mjs`
 
 ## Verified
 
@@ -143,6 +162,22 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
   with an explanation rather than handled.
 - Audio is AAC passthrough, never re-encoded. A non-AAC audio track is rejected
   by design (re-encoding audio in the browser is a separate project).
+
+## Known limits
+
+- **Memory is not fully returned after transcription.** `unloadModels()` disposes
+  the session and clears the pipeline cache (measured: 0 cached afterwards, and
+  the next run rebuilds from local files in 9.8s), but ONNX Runtime's WASM linear
+  heap keeps its pages — peak 2.58 GB, 2.49 GB after unload. Moving transcription
+  into a Web Worker and calling `terminate()` is the only way to hand that back.
+  Not built: the tab stays usable, it just holds the reservation until closed.
+- **Nothing prevents someone copying this.** The source ships by design, so a
+  URL is not a moat. There is no LICENSE file yet — worth adding before it is
+  public.
+- **No accounts and no saved projects.** Presets live in IndexedDB on the user's
+  own machine and export/import as JSON. That is deliberate: a server-side store
+  is the one thing that would turn this into a hosted product with auth, billing
+  and privacy obligations.
 
 ## Tests
 
