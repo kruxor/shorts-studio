@@ -202,3 +202,9 @@ a `python3 -m http.server` maps `.mjs` correctly and hides the problem.
 The E2E script needs `tests/fixtures/shorts-studio-speech-test.mp4` (a short
 MP4 with real speech) and a Chromium binary at the path set in
 `CHROMIUM_EXECUTABLE_PATH`.
+
+## Licence
+
+MIT — see `LICENSE`. Vendored dependencies keep their own terms; `THIRD-PARTY.md`
+lists them, including the OFL texts that ship beside the fonts (redistributing
+those TTFs without the licence is a breach, so they live in `public/assets/fonts/`).
