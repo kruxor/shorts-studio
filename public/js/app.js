@@ -2,7 +2,7 @@ import { extractAudio } from './audio.js';
 import { transcribeAudio, MODELS } from './transcribe.js';
 import { probeVideo, renderVideo } from './render.js';
 import { groupWords, activeGroup, spokenWordIndex, flattenGroups } from './captions.js';
-import { DEFAULT_STYLE, normalizeStyle, clampStyleValue } from './style.js';
+import { DEFAULT_STYLE, FONTS, normalizeStyle, clampStyleValue } from './style.js';
 import { validatePreset, serializePresets, parsePresets } from './presets.js';
 import { transcriptText, replaceTranscriptText } from './alignment.js';
 
@@ -23,6 +23,9 @@ const elements = {
   previewCanvas: $('#previewCanvas'), previewEmpty: $('#previewEmpty'), sourceVideo: $('#sourceVideo'),
   playButton: $('#playButton'), timeSlider: $('#timeSlider'), timeReadout: $('#timeReadout'),
   captionList: $('#captionList'), groupCount: $('#groupCount'), renderButton: $('#renderButton'),
+  transcriptEditor: $('#transcriptEditor'), applyTranscriptText: $('#applyTranscriptText'),
+  revertTranscriptText: $('#revertTranscriptText'), transcriptEditStatus: $('#transcriptEditStatus'),
+  transcriptEditError: $('#transcriptEditError'), fontSelect: $('#font'),
   cancelRender: $('#cancelRender'), downloadLink: $('#downloadLink'), presetName: $('#presetName'),
   savePreset: $('#savePreset'), presetList: $('#presetList'), presetCount: $('#presetCount'),
   exportPresets: $('#exportPresets'), importPresetsButton: $('#importPresetsButton'),
@@ -43,6 +46,8 @@ let isScrubbing = false;
 let renderInProgress = false;
 let cancelRequested = false;
 let databasePromise;
+let loadedFontFamily = null;
+let fontLoadInProgress = false;
 
 function showError(message) {
   elements.errorNotice.textContent = message;
@@ -60,6 +65,32 @@ function showInfo(message) {
 }
 function humanError(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+function paragraphEditorIsDirty() {
+  return Boolean(transcript?.words?.length && elements.transcriptEditor.value !== transcriptText(transcript));
+}
+function setParagraphEditorStatus(message) { elements.transcriptEditStatus.textContent = message; }
+function syncParagraphEditor(message = 'No paragraph edits yet.') {
+  elements.transcriptEditor.value = transcript ? transcriptText(transcript) : '';
+  elements.transcriptEditError.hidden = true;
+  elements.transcriptEditError.textContent = '';
+  setParagraphEditorStatus(message);
+}
+function countChangedWords(before, after) {
+  const oldWords = String(before).trim().split(/\s+/u).filter(Boolean);
+  const newWords = String(after).trim().split(/\s+/u).filter(Boolean);
+  let oldIndex = 0;
+  let newIndex = 0;
+  let changed = 0;
+  while (oldIndex < oldWords.length && newIndex < newWords.length) {
+    if (oldWords[oldIndex] === newWords[newIndex]) { oldIndex++; newIndex++; continue; }
+    if (oldWords[oldIndex + 1] === newWords[newIndex]) { changed++; oldIndex++; continue; }
+    if (oldWords[oldIndex] === newWords[newIndex + 1]) { changed++; newIndex++; continue; }
+    changed++;
+    oldIndex++;
+    newIndex++;
+  }
+  return changed + oldWords.length - oldIndex + newWords.length - newIndex;
 }
 function setWorkflowStatus(text) { elements.workflowStatus.textContent = text; }
 
@@ -139,12 +170,17 @@ function setSelectedFile(file) {
     elements.fileInput.value = '';
     return;
   }
+  if (paragraphEditorIsDirty() && !window.confirm('You have unapplied transcript edits. Discard them and choose a different video?')) {
+    elements.fileInput.value = '';
+    return;
+  }
   if (fileUrl) URL.revokeObjectURL(fileUrl);
   fileUrl = URL.createObjectURL(file);
   selectedFile = file;
   videoInfo = null;
   transcript = null;
   groups = [];
+  syncParagraphEditor();
   elements.sourceVideo.pause();
   elements.sourceVideo.src = fileUrl;
   elements.sourceVideo.load();
@@ -167,14 +203,24 @@ function escapeHtml(value) {
 }
 function escapeAttribute(value) { return escapeHtml(value); }
 
+async function ensureSelectedFontLoaded(fontStyle = style) {
+  const font = FONTS.find(item => item.family === fontStyle.font) ?? FONTS.find(item => item.family === DEFAULT_STYLE.font);
+  if (!font || !document.fonts?.load || !document.fonts?.check) throw new Error('This browser cannot verify locally bundled caption fonts.');
+  const descriptor = `${font.weight} ${fontStyle.font_size}px "${font.family}"`;
+  await document.fonts.load(descriptor);
+  if (!document.fonts.check(descriptor)) throw new Error(`The local ${font.family} font did not load. Check the bundled font asset.`);
+  loadedFontFamily = font.family;
+}
+
 function drawCaptionLayer(ctx, captionGroups, captionStyle, time, width, height) {
   const group = activeGroup(captionGroups, time);
-  if (!group?.length || !width || !height) return;
+  if (!group?.length || !width || !height || loadedFontFamily !== captionStyle.font) return;
+  const font = FONTS.find(item => item.family === captionStyle.font) ?? FONTS[0];
   const scale = Math.max(0.1, width / OUTPUT_WIDTH);
   const fontSize = captionStyle.font_size * scale;
   const lineHeight = fontSize * 1.16;
   ctx.save();
-  ctx.font = `800 ${fontSize}px "Montserrat ExtraBold", Montserrat, Arial, sans-serif`;
+  ctx.font = `${font.weight} ${fontSize}px "${font.family}", sans-serif`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
@@ -230,7 +276,25 @@ function drawCompleteFrame(ctx, video, time, width, height) {
   drawSourceFrame(ctx, video, time, width, height);
   drawCaptionLayer(ctx, groups, style, time, width, height);
 }
+function requestFontReadyPreview() {
+  if (fontLoadInProgress) return;
+  const requestedStyle = style;
+  fontLoadInProgress = true;
+  let succeeded = false;
+  ensureSelectedFontLoaded(requestedStyle)
+    .then(() => { succeeded = true; drawPreview(); })
+    .catch(error => showError(`Could not load the selected caption font. ${humanError(error, 'Check the local font files and try again.')}`))
+    .finally(() => {
+      fontLoadInProgress = false;
+      if (succeeded && transcript?.words?.length && loadedFontFamily !== style.font) requestFontReadyPreview();
+    });
+}
+
 function drawPreview() {
+  if (transcript?.words?.length && loadedFontFamily !== style.font) {
+    requestFontReadyPreview();
+    return;
+  }
   const canvas = elements.previewCanvas;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -306,8 +370,41 @@ function updateGroupList() {
   lastActiveGroup = -2;
 }
 
+function applyTranscriptEdit() {
+  if (!transcript?.words?.length) return;
+  elements.transcriptEditError.hidden = true;
+  elements.transcriptEditError.textContent = '';
+  const beforeText = transcriptText(transcript);
+  try {
+    const aligned = replaceTranscriptText(transcript, elements.transcriptEditor.value);
+    const afterText = transcriptText(aligned);
+    const changed = countChangedWords(beforeText, afterText);
+    transcript = { ...aligned, text: afterText };
+    groups = groupWords(transcript.words, style);
+    updateGroupList();
+    elements.transcriptEditor.value = afterText;
+    setParagraphEditorStatus(changed ? `${changed} ${changed === 1 ? 'word' : 'words'} changed and re-aligned.` : 'No word changes; transcript is up to date.');
+    drawPreview();
+  } catch (error) {
+    elements.transcriptEditError.textContent = `Could not apply transcript: ${humanError(error, 'Review the text and try again.')}`;
+    elements.transcriptEditError.hidden = false;
+    setParagraphEditorStatus('Your typed text is kept. Correct it or revert before continuing.');
+  }
+}
+
+function revertTranscriptEdit() {
+  syncParagraphEditor('Reverted to the current timed transcript.');
+}
+
 function applyGroupEdit(groupIndex, replacementText) {
   clearNotices();
+  if (paragraphEditorIsDirty()) {
+    elements.transcriptEditError.textContent = 'Apply or revert the full-transcript edits before saving a caption-group edit.';
+    elements.transcriptEditError.hidden = false;
+    setParagraphEditorStatus('Unapplied full-transcript edits are protected.');
+    elements.transcriptEditor.focus();
+    return;
+  }
   const currentGroups = groups;
   const currentFlat = flattenGroups(currentGroups);
   const updatedGroupTexts = currentGroups.map((group, index) => index === groupIndex ? replacementText : group.map(word => word.text).join(' '));
@@ -316,6 +413,7 @@ function applyGroupEdit(groupIndex, replacementText) {
     transcript = { ...transcript, ...aligned, text: transcriptText(aligned) };
     groups = groupWords(transcript.words, style);
     updateGroupList();
+    syncParagraphEditor();
     drawPreview();
     showInfo('Caption text updated and aligned to the existing speech timings.');
   } catch (error) {
@@ -343,6 +441,7 @@ function updateStyleControlValues() {
     document.getElementById(outputId).textContent = style[inputId];
   });
   $('#highlight_enabled').checked = style.highlight_enabled;
+  elements.fontSelect.value = style.font;
 }
 function readStyleFromControls(changedId) {
   const inputStyle = { ...style };
@@ -352,6 +451,7 @@ function readStyleFromControls(changedId) {
   });
   ['caption_color', 'highlight_color', 'stroke_color'].forEach(id => { inputStyle[id] = document.getElementById(id).value; });
   inputStyle.highlight_enabled = $('#highlight_enabled').checked;
+  inputStyle.font = elements.fontSelect.value;
   if (changedId === 'min_words' && inputStyle.min_words > inputStyle.max_words) inputStyle.max_words = inputStyle.min_words;
   if (changedId === 'max_words' && inputStyle.max_words < inputStyle.min_words) inputStyle.min_words = inputStyle.max_words;
   style = normalizeStyle(inputStyle);
@@ -364,7 +464,7 @@ function readStyleFromControls(changedId) {
 }
 
 function installStyleControls() {
-  ['font_size', 'y_position', 'stroke_width', 'min_words', 'max_words', 'max_chars', 'pause_split', 'caption_color', 'highlight_color', 'stroke_color', 'highlight_enabled'].forEach(id => {
+  ['font', 'font_size', 'y_position', 'stroke_width', 'min_words', 'max_words', 'max_chars', 'pause_split', 'caption_color', 'highlight_color', 'stroke_color', 'highlight_enabled'].forEach(id => {
     const control = document.getElementById(id);
     control.addEventListener('input', () => readStyleFromControls(id));
     control.addEventListener('change', () => readStyleFromControls(id));
@@ -554,6 +654,7 @@ async function startWorkflow() {
     setStage('review');
     setWorkflowStatus('Review your captions');
     setProgress('Review and style captions', 100);
+    syncParagraphEditor();
     drawPreview();
   } catch (error) {
     elements.startButton.disabled = false;
@@ -592,6 +693,10 @@ async function renderCurrentVideo() {
   setWorkflowStatus('Rendering locally');
   setProgress('Preparing video renderer…', 0);
   try {
+    // Canvas silently substitutes a fallback face if the chosen font has not
+    // finished loading, which would bake the wrong font into the export.
+    setProgress('Loading caption font…', 0);
+    await ensureSelectedFontLoaded(style);
     // render.js draws its decoded VideoFrame onto this canvas before calling drawFrame.
     // Overlay the exact caption layer used by the live preview without seeking a second video.
     const drawFrame = (ctx, time) => {
@@ -650,6 +755,8 @@ function installEvents() {
   }));
   elements.dropZone.addEventListener('drop', event => setSelectedFile(event.dataTransfer?.files?.[0]));
   elements.startButton.addEventListener('click', startWorkflow);
+  elements.applyTranscriptText.addEventListener('click', applyTranscriptEdit);
+  elements.revertTranscriptText.addEventListener('click', revertTranscriptEdit);
   elements.playButton.addEventListener('click', async () => {
     if (elements.sourceVideo.paused) {
       try { await elements.sourceVideo.play(); elements.playButton.innerHTML = 'Ⅱ <span>Pause</span>'; }

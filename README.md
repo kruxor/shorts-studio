@@ -31,6 +31,8 @@ alignment.js   edit transcript text without losing word timings
 presets.js     IndexedDB presets + JSON export/import
 
 app.js         one drawCaptionLayer() used by BOTH preview and render
+               whole-transcript (paragraph) editor: edit the text, then
+                 replaceTranscriptText() re-aligns the existing timings
 render.js      mp4box demux -> VideoDecoder -> canvas -> VideoEncoder
                 (avc1.640028) -> mp4-muxer -> Blob -> download
 ```
@@ -49,6 +51,10 @@ HTTP on a LAN IP do **not**, and `VideoEncoder` will be `undefined` there.
 # development (secure context via localhost)
 python3 -m http.server 8099 -d public
 # open http://localhost:8099/
+
+# or the local vhost, which has a self-signed cert on 7443
+#   https://shorts-studio.local:7443   (accept the warning once)
+# 443 and 8443 are already taken by tailscaled on this host.
 ```
 
 Deploy by copying `public/` behind HTTPS. There is no build step.
@@ -75,11 +81,14 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 |---|---|
 | In-browser transcription | 53 words, word-level timestamps confirmed |
 | Caption grouping | 21 groups in the editor |
+| Whole-transcript editor | prefilled with 53 words; inserting a word reported "1 word changed and re-aligned" and rebuilt groups |
+| Invalid transcript edit | inline error, typed text preserved, captions still rendered |
+| Bundled fonts | all 4 families load (`document.fonts.check` true) |
 | Console / page errors | 0 |
 | Render | completed, download produced |
 | Output format | H.264 1080x1920 30 fps + AAC 44.1 kHz mono, 24.02 s |
 | Captions actually burned in | caption band 4.42% pixels changed vs 0.00% in a control band |
-| Logic tests (`node --test`) | 8/8 pass |
+| Logic tests (`node --test`) | 13/13 pass |
 
 ## Not verified
 

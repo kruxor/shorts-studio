@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#101114">
   <meta name="description" content="Create and render captioned short videos privately in your browser.">
   <title>Shorts Studio — local caption editor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111'/%3E%3Crect x='7' y='19' width='18' height='4' rx='2' fill='%23fff34a'/%3E%3Crect x='11' y='12' width='14' height='4' rx='2' fill='%23fff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="./css/app.css">
   <script type="importmap">
     {"imports":{"onnxruntime-common":"./vendor/common/esm/index.js","onnxruntime-web":"./vendor/ort/ort.bundle.min.mjs"}}
@@ -82,7 +83,7 @@
           <canvas id="previewCanvas" aria-label="Video preview with captions"></canvas>
           <div class="preview-empty" id="previewEmpty">Your video preview will appear here.</div>
         </div>
-        <video id="sourceVideo" playsinline muted preload="metadata" aria-hidden="true"></video>
+        <video id="sourceVideo" playsinline preload="metadata" aria-hidden="true"></video>
         <div class="preview-controls">
           <button class="button button-quiet" id="playButton" type="button" disabled aria-label="Play preview">▶ <span>Play</span></button>
           <input id="timeSlider" type="range" min="0" max="1" step="0.01" value="0" disabled aria-label="Preview position">
@@ -91,6 +92,22 @@
       </section>
 
       <section class="panel captions-panel" aria-labelledby="captions-heading">
+        <div class="paragraph-editor" aria-labelledby="transcript-heading">
+          <div class="panel-heading compact-heading">
+            <div><p class="eyebrow">WHOLE TRANSCRIPT</p><h2 id="transcript-heading">Full transcript</h2></div>
+          </div>
+          <p class="section-hint">Read and correct the complete transcript. Applying edits re-aligns word timings automatically.</p>
+          <label class="visually-hidden" for="transcriptEditor">Full transcript text</label>
+          <textarea id="transcriptEditor" class="transcript-editor" rows="8" spellcheck="true" aria-describedby="transcriptEditStatus transcriptEditError"></textarea>
+          <div class="paragraph-editor-actions">
+            <div class="paragraph-editor-buttons">
+              <button class="button button-secondary" id="applyTranscriptText" type="button">Apply to captions</button>
+              <button class="button button-quiet" id="revertTranscriptText" type="button">Revert</button>
+            </div>
+            <p class="transcript-edit-status" id="transcriptEditStatus" role="status" aria-live="polite">No paragraph edits yet.</p>
+          </div>
+          <p class="transcript-edit-error" id="transcriptEditError" role="alert" hidden></p>
+        </div>
         <div class="panel-heading compact-heading">
           <div><p class="eyebrow">WORD-LEVEL TIMING</p><h2 id="captions-heading">Caption groups</h2></div>
           <span class="count-pill" id="groupCount">0 groups</span>
@@ -105,6 +122,7 @@
           <button class="button button-quiet reset-button" id="resetStyle" type="button">Reset</button>
         </div>
         <div class="style-grid">
+          <label class="control-card font-control" for="font"><span>Caption font</span><select id="font" aria-label="Caption font"><option value="Montserrat ExtraBold">Montserrat ExtraBold</option><option value="Anton">Anton</option><option value="Bebas Neue">Bebas Neue</option><option value="Archivo Black">Archivo Black</option></select></label>
           <label class="control-card range-control"><span class="control-top"><span>Font size</span><output id="fontSizeOutput">108</output></span><input id="font_size" type="range" min="24" max="180" step="1"></label>
           <label class="control-card range-control"><span class="control-top"><span>Vertical position</span><output id="yPositionOutput">66%</output></span><input id="y_position" type="range" min="0.1" max="0.9" step="0.01"></label>
           <label class="control-card range-control"><span class="control-top"><span>Outline thickness</span><output id="strokeWidthOutput">4.5</output></span><input id="stroke_width" type="range" min="0" max="12" step="0.5"></label>
