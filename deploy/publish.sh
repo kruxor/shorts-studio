@@ -8,7 +8,7 @@
 # weights move on the first run and are unchanged afterwards.
 set -euo pipefail
 
-TARGET=${TARGET:-nerd4}
+TARGET=${TARGET:?set TARGET to an ssh host, e.g. TARGET=web1}
 REMOTE_DIR=${REMOTE_DIR:-/var/www/html/shorts.kruxor.com}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 

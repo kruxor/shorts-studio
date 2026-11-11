@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Root steps to serve Shorts Studio at shorts.kruxor.com on nerd4.
+# Root steps to serve Shorts Studio at a public hostname.
 #
 # Prerequisites, in this order:
 #   1. DNS: an A record for shorts.kruxor.com -> 198.23.138.26, DNS-only
@@ -8,14 +8,14 @@
 #      for the same reason.
 #   2. Files: ./deploy/publish.sh already run from the workstation.
 #
-# Then, as root on nerd4:
-#   sudo bash nerd4-setup.sh
+# Then, as root on the target server:
+#   sudo DOMAIN=shorts.kruxor.com WEB_ROOT=/var/www/html/shorts.kruxor.com bash setup-vhost.sh
 #
 # It is idempotent: re-running rewrites the vhost and reloads nginx.
 set -euo pipefail
 
-DOMAIN=shorts.kruxor.com
-WEB_ROOT=/var/www/html/shorts.kruxor.com
+DOMAIN=${DOMAIN:-shorts.kruxor.com}
+WEB_ROOT=${WEB_ROOT:-/var/www/html/shorts.kruxor.com}
 CONF=/etc/nginx/sites-available/$DOMAIN
 
 if [ "$(id -u)" -ne 0 ]; then echo "run with sudo" >&2; exit 1; fi
@@ -25,13 +25,13 @@ if [ ! -f "$WEB_ROOT/index.html" ]; then
   exit 1
 fi
 
-cat > "$CONF" <<'NGINX'
+sed -e "s|__DOMAIN__|$DOMAIN|g" -e "s|__WEB_ROOT__|$WEB_ROOT|g" > "$CONF" <<'NGINX'
 server {
     listen 80;
     listen [::]:80;
-    server_name shorts.kruxor.com;
+    server_name __DOMAIN__;
 
-    root /var/www/html/shorts.kruxor.com;
+    root __WEB_ROOT__;
     index index.html;
     charset utf-8;
 

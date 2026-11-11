@@ -113,17 +113,22 @@ optional: WebCodecs requires a secure context.
 
 ### Publishing to a subdomain
 
-Not done yet; this is the shape of it for `shorts.kruxor.com`:
+Scripted in `deploy/`; the target host is still to be chosen.
 
-1. `rsync -a public/ host:/var/www/shorts-studio/public/` — no build step.
-   `public/models/` is gitignored, so it travels with the rsync (77 MB), not git.
-2. Vhost = `deploy/nginx-shorts-studio.conf`, changed to `listen 443 ssl` with a
-   real certificate.
-3. Leave the cache headers alone. The `no-store` they replaced was what made a
-   returning visitor re-download 112 MB.
-4. `E2E_URL=https://shorts.kruxor.com/ node tests/e2e/vhost-boot.mjs` — this is
-   the one that catches a dead page behind a healthy-looking server.
+1. `TARGET=<ssh-host> ./deploy/publish.sh` — rsync of `public/`, no build step.
+   `public/models/` is gitignored, so it only ever travels this way.
+2. DNS: an A record for `shorts.kruxor.com` → the server's IP, **DNS-only**
+   (grey cloud). Certbot validates over HTTP-01 from the origin; a proxied
+   record puts Cloudflare in front of that.
+3. On the server as root: `sudo bash setup-vhost.sh` — writes the vhost,
+   reloads nginx, then asks certbot for a certificate. Safe to re-run; it skips
+   TLS until DNS resolves.
+4. `E2E_URL=https://shorts.kruxor.com/ node tests/e2e/vhost-boot.mjs` — the one
+   that catches a dead page behind a healthy-looking server.
 5. `E2E_URL=https://shorts.kruxor.com/ node tests/e2e/file-drop.mjs`
+
+Do not "simplify" the cache headers back to `no-store`: that was what made a
+returning visitor re-download 112 MB.
 
 ## Verified
 
