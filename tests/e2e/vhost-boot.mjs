@@ -33,6 +33,10 @@ try {
   page.on('response', response => {
     const url = new URL(response.url());
     if (!/\.(m?js)$/.test(url.pathname)) return;
+    // Cloudflare injects its own bot-detection script under /cdn-cgi/. It is not
+    // ours, we cannot set its headers, and it is served inconsistently, so hold
+    // only our own modules to the JavaScript MIME requirement.
+    if (url.pathname.startsWith('/cdn-cgi/')) return;
     result.scriptMime.push({ path: url.pathname, contentType: response.headers()['content-type'] || '' });
   });
 
