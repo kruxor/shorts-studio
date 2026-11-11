@@ -148,8 +148,21 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 
 ```bash
 node --test                     # logic: grouping, clamps, preset round-trip
+
+# fast guards (~10s each), run against the server you actually deploy
+E2E_URL=https://shorts-studio.local:7443/ node tests/e2e/vhost-boot.mjs
+E2E_URL=https://shorts-studio.local:7443/ node tests/e2e/file-drop.mjs
+
+# full pipeline: transcribe, edit, render, verify the MP4
 E2E_URL=http://localhost:8099/ node tests/e2e/shorts-studio.mjs
 ```
+
+`vhost-boot` exists because the app can be silently dead behind a correct-looking
+server: if a module script is served with the wrong MIME type the browser refuses
+it, `app.js` never runs, and the only symptom is a console line about a
+"JavaScript-or-Wasm module script". Drag and drop and the file picker both stop
+working, which reads like a feature bug. Always run it against the real vhost —
+a `python3 -m http.server` maps `.mjs` correctly and hides the problem.
 
 The E2E script needs `tests/fixtures/shorts-studio-speech-test.mp4` (a short
 MP4 with real speech) and a Chromium binary at the path set in

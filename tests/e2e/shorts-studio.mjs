@@ -40,6 +40,7 @@ async function main() {
   });
   const context = await browser.newContext({
     acceptDownloads: true,
+    ignoreHTTPSErrors: true,
     viewport: { width: 1440, height: 1100 },
   });
   const page = await context.newPage();
