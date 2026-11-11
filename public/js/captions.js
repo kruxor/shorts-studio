@@ -41,8 +41,26 @@ export function groupWords(input, settings) {
   return groups;
 }
 
-export function activeGroup(groups, time) {
-  return groups.find(group => time >= group[0].start && time < group[group.length - 1].end) ?? null;
+// A line stays on screen until the next line starts, instead of vanishing the
+// instant its final word ends. Fast speech produces two- and three-word lines
+// lasting a few hundred milliseconds; without the hold the viewer sees a
+// flicker with blank gaps between lines and cannot read short lines at all.
+// The last line additionally gets a floor so a clipped final word is still
+// legible. Lines never overlap, so this cannot desync from the audio.
+export function activeGroup(groups, time, minTailDuration = 0.35) {
+  if (!groups?.length) return null;
+  for (let index = 0; index < groups.length; index += 1) {
+    const group = groups[index];
+    if (!group?.length) continue;
+    const start = Number(group[0].start);
+    const spokenEnd = Number(group[group.length - 1].end);
+    const nextStart = groups[index + 1]?.length ? Number(groups[index + 1][0].start) : null;
+    const end = nextStart === null || !Number.isFinite(nextStart)
+      ? Math.max(spokenEnd, start + Math.max(0, Number(minTailDuration) || 0))
+      : Math.max(spokenEnd, nextStart);
+    if (time >= start && time < end) return group;
+  }
+  return null;
 }
 
 export function spokenWordIndex(group, time) {
