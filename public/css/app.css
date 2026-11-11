@@ -120,19 +120,25 @@ progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
 .notice-info { border: 1px solid #49416b; color: #ded4ff; background: #252132; }
 
 .workspace { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(330px, .92fr); gap: 16px; align-items: start; }
-.preview-panel { grid-column: 1; grid-row: 1 / span 2; }
+.preview-panel { grid-column: 1; grid-row: 1 / -1; }
 .captions-panel { grid-column: 2; grid-row: 1; }
-.style-panel { grid-column: 1 / -1; }
-.presets-panel { grid-column: 1; }
-.render-panel { grid-column: 2; }
+/* Controls live in the right column beside the preview, not full width beneath
+   it: a full-width panel below forced the user to scroll the video off-screen to
+   reach the style controls. */
+.style-panel { grid-column: 2; grid-row: 2; }
+.presets-panel { grid-column: 2; grid-row: 3; }
+.render-panel { grid-column: 2; grid-row: 4; }
+.style-panel .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .preview-stage { position: relative; width: 100%; max-width: 430px; margin: 0 auto; overflow: hidden; border: 1px solid #373942; border-radius: 12px; background: #08090b; aspect-ratio: 9 / 16; }
-.preview-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+ .preview-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; cursor: grab; touch-action: none; }
+.preview-stage canvas.is-dragging { cursor: grabbing; }
 .preview-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: #727580; text-align: center; font-size: 12px; pointer-events: none; }
 #sourceVideo { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; left: -10px; top: -10px; }
 .preview-controls { display: flex; align-items: center; gap: 10px; max-width: 430px; margin: 12px auto 0; }
 .preview-controls .button { min-height: 33px; padding: 7px 10px; }
 #timeSlider { min-width: 35px; flex: 1; accent-color: var(--accent); }
 .time-readout { min-width: 75px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; font-size: 10px; }
+.preview-drag-hint { max-width: 430px; margin: 7px auto 0; color: var(--faint); font-size: 10px; text-align: center; }
 .section-hint { margin: -5px 0 13px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .paragraph-editor { margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid #30323a; }
 .paragraph-editor .panel-heading { margin-bottom: 9px; }
@@ -142,7 +148,10 @@ progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
 .paragraph-editor-buttons { display: flex; gap: 7px; }
 .transcript-edit-status { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .transcript-edit-error { margin: 8px 0 0; color: #ffd2d6; font-size: 11px; line-height: 1.5; }
-.caption-list { max-height: 480px; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 3px; }
+ .caption-list { max-height: 48vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 3px; scrollbar-color: #4b4d56 #1c1e23; scrollbar-width: thin; }
+.caption-list::-webkit-scrollbar { width: 8px; }
+.caption-list::-webkit-scrollbar-track { border-radius: 8px; background: #1c1e23; }
+.caption-list::-webkit-scrollbar-thumb { border: 2px solid #1c1e23; border-radius: 8px; background: #4b4d56; }
 .caption-row { padding: 10px; border: 1px solid #30323a; border-radius: 10px; background: #1e2026; }
 .caption-row.is-active { border-color: #8970d2; background: #292532; box-shadow: inset 3px 0 var(--accent); }
 .caption-row-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; color: #b4b6c0; font-size: 9px; font-variant-numeric: tabular-nums; }
@@ -185,6 +194,9 @@ progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
 .page-footer { padding: 25px 0 35px; color: var(--faint); text-align: center; font-size: 10px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
+@media (min-width: 681px) {
+  .preview-panel { position: sticky; top: 12px; align-self: start; }
+}
 @media (max-width: 900px) {
   .workspace { grid-template-columns: minmax(0, 1fr) minmax(300px, .95fr); }
   .style-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -212,7 +224,7 @@ progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
   .render-panel { order: 4; }
   .preview-stage { width: min(100%, 360px); }
   .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .caption-list { max-height: 420px; }
+  .caption-list { max-height: 48vh; }
 }
 @media (max-width: 390px) {
   .app-shell { width: calc(100% - 22px); }

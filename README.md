@@ -92,8 +92,11 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | Render | completed, download produced |
 | Output format | H.264 1080x1920 30 fps + AAC 44.1 kHz mono, 24.02 s |
 | Captions actually burned in | caption band 4.42% pixels changed vs 0.00% in a control band |
-| Logic tests (`node --test`) | 18/18 pass |
+| Logic tests (`node --test`) | 19/19 pass |
 | Caption hold | a line stays up until the next line starts; no blank gaps |
+| Preview stays visible | pinned at 12px while the style controls scroll past; controls sit beside it, not below |
+| Drag to position | dragged to 22% height; exported MP4 has 100% of caption ink in the top third, 0% at the old 66% |
+| Model unload | pipeline cache cleared after a run (0 cached); next run rebuilds in 9.8s |
 | 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
 | 24fps source | output duration 24.000s — duration and caption sync preserved |
 | Render progress | label advances with frames done/total, fps and ETA |

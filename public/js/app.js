@@ -1,5 +1,5 @@
 import { extractAudio } from './audio.js';
-import { transcribeAudio, MODELS } from './transcribe.js';
+import { transcribeAudio, unloadModels, MODELS } from './transcribe.js';
 import { probeVideo, renderVideo } from './render.js';
 import { groupWords, activeGroup, spokenWordIndex, flattenGroups } from './captions.js';
 import { DEFAULT_STYLE, FONTS, normalizeStyle, clampStyleValue } from './style.js';
@@ -48,6 +48,9 @@ let cancelRequested = false;
 let databasePromise;
 let loadedFontFamily = null;
 let fontLoadInProgress = false;
+let previewPointerId = null;
+let previewDragMoved = false;
+let suppressPreviewClick = false;
 
 function showError(message) {
   elements.errorNotice.textContent = message;
@@ -226,7 +229,7 @@ function drawCaptionLayer(ctx, captionGroups, captionStyle, time, width, height)
   ctx.lineJoin = 'round';
   ctx.lineWidth = captionStyle.stroke_width * scale;
   ctx.strokeStyle = captionStyle.stroke_color;
-  const maxLineWidth = width * 0.9;
+  const maxLineWidth = Math.max(1, Math.min(width * 0.9, width - captionStyle.stroke_width * scale * 2));
   const spaceWidth = ctx.measureText(' ').width;
   const lines = [[]];
   let lineWidth = 0;
@@ -244,19 +247,29 @@ function drawCaptionLayer(ctx, captionGroups, captionStyle, time, width, height)
     lineWidth += widthWithSpace;
   });
   const activeWord = captionStyle.highlight_enabled ? spokenWordIndex(group, time) : -1;
+  const centerX = width * captionStyle.x_position;
   const centerY = height * captionStyle.y_position;
   const firstBaseline = centerY - ((lines.length - 1) * lineHeight) / 2;
+  const edgePadding = captionStyle.stroke_width * scale;
   lines.forEach((line, lineIndex) => {
     const totalWidth = line.reduce((sum, word) => sum + word.width, 0) + Math.max(0, line.length - 1) * spaceWidth;
-    let x = (width - totalWidth) / 2;
+    const availableWidth = Math.max(1, width - edgePadding * 2);
+    const lineScale = Math.min(1, availableWidth / Math.max(1, totalWidth));
+    const drawnWidth = totalWidth * lineScale;
+    const x = Math.max(edgePadding, Math.min(width - edgePadding - drawnWidth, centerX - drawnWidth / 2));
     const y = firstBaseline + lineIndex * lineHeight;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(lineScale, 1);
+    let wordX = 0;
     line.forEach((word, wordIndex) => {
-      if (captionStyle.stroke_width > 0) ctx.strokeText(word.text, x, y);
+      if (captionStyle.stroke_width > 0) ctx.strokeText(word.text, wordX, 0);
       const color = word.index === activeWord ? captionStyle.highlight_color : captionStyle.caption_color;
       ctx.fillStyle = color;
-      ctx.fillText(word.text, x, y);
-      x += word.width + (wordIndex < line.length - 1 ? spaceWidth : 0);
+      ctx.fillText(word.text, wordX, 0);
+      wordX += word.width + (wordIndex < line.length - 1 ? spaceWidth : 0);
     });
+    ctx.restore();
   });
   ctx.restore();
 }
@@ -311,7 +324,10 @@ function previewTick() {
     const time = elements.sourceVideo.currentTime || 0;
     drawPreview();
     setVideoReadout(time);
-    const current = groups.findIndex(group => time >= group[0].start && time < group.at(-1).end);
+    // Use the same hold-aware lookup as the canvas, otherwise the highlighted
+    // row and the visible caption disagree during the hold at the end of a line.
+    const activeLine = activeGroup(groups, time);
+    const current = activeLine ? groups.indexOf(activeLine) : -1;
     if (current !== lastActiveGroup) {
       lastActiveGroup = current;
       elements.captionList.querySelectorAll('.caption-row').forEach((row, index) => row.classList.toggle('is-active', index === current));
@@ -443,7 +459,15 @@ function updateStyleControlValues() {
   $('#highlight_enabled').checked = style.highlight_enabled;
   elements.fontSelect.value = style.font;
 }
-function readStyleFromControls(changedId) {
+function refreshStyle({ regroup = true } = {}) {
+  updateStyleControlValues();
+  if (regroup && transcript?.words?.length) {
+    groups = groupWords(transcript.words, style);
+    updateGroupList();
+  }
+  drawPreview();
+}
+function readStyleFromControls(changedId, position = null) {
   const inputStyle = { ...style };
   ['font_size', 'y_position', 'stroke_width', 'min_words', 'max_words', 'max_chars', 'pause_split'].forEach(id => {
     const value = document.getElementById(id).value;
@@ -452,15 +476,14 @@ function readStyleFromControls(changedId) {
   ['caption_color', 'highlight_color', 'stroke_color'].forEach(id => { inputStyle[id] = document.getElementById(id).value; });
   inputStyle.highlight_enabled = $('#highlight_enabled').checked;
   inputStyle.font = elements.fontSelect.value;
+  if (position) {
+    inputStyle.x_position = clampStyleValue('x_position', position.x_position);
+    inputStyle.y_position = clampStyleValue('y_position', position.y_position);
+  }
   if (changedId === 'min_words' && inputStyle.min_words > inputStyle.max_words) inputStyle.max_words = inputStyle.min_words;
   if (changedId === 'max_words' && inputStyle.max_words < inputStyle.min_words) inputStyle.min_words = inputStyle.max_words;
   style = normalizeStyle(inputStyle);
-  updateStyleControlValues();
-  if (transcript?.words?.length) {
-    groups = groupWords(transcript.words, style);
-    updateGroupList();
-  }
-  drawPreview();
+  refreshStyle({ regroup: !position });
 }
 
 function installStyleControls() {
@@ -632,10 +655,18 @@ async function startWorkflow() {
     setStage('transcribe');
     setWorkflowStatus('Transcribing words');
     setProgress(`Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`, 0);
-    const result = await transcribeAudio(audio.samples, {
-      model,
-      onProgress: progress => setProgress(`Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`, progressPercent(progress)),
-    });
+    let result;
+    try {
+      result = await transcribeAudio(audio.samples, {
+        model,
+        onProgress: progress => setProgress(`Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`, progressPercent(progress)),
+      });
+    } finally {
+      // Release the model and its runtime buffers the moment the words are in.
+      // The transcript is plain data from here on, so nothing needs the model
+      // again until the next run.
+      await unloadModels().catch(() => {});
+    }
     if (!Array.isArray(result?.words) || !result.words.length) {
       throw new Error('Transcription returned no timed words. Try another model or a clip with clear speech.');
     }
@@ -746,6 +777,33 @@ async function renderCurrentVideo() {
   }
 }
 
+function startPreviewDrag(event) {
+  if (!selectedFile || !transcript?.words?.length || elements.workspace.hidden || event.button !== 0) return;
+  previewPointerId = event.pointerId;
+  previewDragMoved = false;
+  elements.previewCanvas.classList.add('is-dragging');
+  elements.previewCanvas.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+function movePreviewDrag(event) {
+  if (event.pointerId !== previewPointerId) return;
+  const rect = elements.previewCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  previewDragMoved = true;
+  readStyleFromControls(null, {
+    x_position: (event.clientX - rect.left) / rect.width,
+    y_position: (event.clientY - rect.top) / rect.height,
+  });
+  event.preventDefault();
+}
+function endPreviewDrag(event) {
+  if (event.pointerId !== previewPointerId) return;
+  if (event.type === 'pointerup' && previewDragMoved) suppressPreviewClick = true;
+  previewPointerId = null;
+  previewDragMoved = false;
+  elements.previewCanvas.classList.remove('is-dragging');
+}
+
 function installEvents() {
   elements.fileInput.addEventListener('change', event => setSelectedFile(event.target.files?.[0]));
   elements.dropZone.addEventListener('keydown', event => {
@@ -796,8 +854,13 @@ function installEvents() {
     event.target.value = '';
   });
   installStyleControls();
+  elements.previewCanvas.addEventListener('pointerdown', startPreviewDrag);
+  elements.previewCanvas.addEventListener('pointermove', movePreviewDrag);
+  elements.previewCanvas.addEventListener('pointerup', endPreviewDrag);
+  elements.previewCanvas.addEventListener('pointercancel', endPreviewDrag);
   elements.previewCanvas.addEventListener('click', () => {
-    if (elements.sourceVideo.paused) elements.playButton.click(); else elements.playButton.click();
+    if (suppressPreviewClick) { suppressPreviewClick = false; return; }
+    elements.playButton.click();
   });
 }
 

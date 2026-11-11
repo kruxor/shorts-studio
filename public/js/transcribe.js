@@ -61,6 +61,26 @@ function normalizeWordChunks(result) {
   return words;
 }
 
+// The pipeline keeps its ONNX sessions and ~320MB of weights, plus the runtime's
+// working buffers, alive for as long as it is cached. Once a transcription is
+// done nothing needs the model again until the next run, so release it instead
+// of leaving the tab holding gigabytes. Nothing is re-downloaded on reload: the
+// weights are local files, so rebuilding costs a second or two.
+export async function unloadModels() {
+  const recognizers = transcribeAudio._recognizers;
+  if (!recognizers?.size) return 0;
+  let released = 0;
+  for (const recognizer of recognizers.values()) {
+    try {
+      if (typeof recognizer?.dispose === 'function') await recognizer.dispose();
+      else if (typeof recognizer?.model?.dispose === 'function') await recognizer.model.dispose();
+      released += 1;
+    } catch { /* a session that is already closed is not an error here */ }
+  }
+  recognizers.clear();
+  return released;
+}
+
 export async function transcribeAudio(samples, { model = 'base.en', onProgress } = {}) {
   if (!(samples instanceof Float32Array) || samples.length === 0) {
     throw new TypeError('Whisper input must be a non-empty Float32Array of 16 kHz mono samples.');
