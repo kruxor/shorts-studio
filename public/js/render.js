@@ -214,8 +214,9 @@ function waitForEncoderCapacity(encoder) {
   });
 }
 
-function report(onProgress, stage, progress) {
-  onProgress?.({ stage, progress: Math.max(0, Math.min(1, Number(progress) || 0)) });
+function report(onProgress, stage, progress, detail) {
+  const value = Math.max(0, Math.min(1, Number(progress) || 0));
+  onProgress?.({ stage, progress: value, phase: stage, value, detail });
 }
 
 function addPassthroughAudio(muxer, samples, audioTrack, audioConfig, onProgress) {
@@ -315,98 +316,231 @@ export async function renderVideo({ file, drawFrame, width, height, fps = 30, on
   canvas.height = outputHeight;
   const context = canvas.getContext('2d', { alpha: false });
   if (!context) throw new Error('This browser could not create a 2D canvas for video rendering.');
-  const decodedFrames = [];
+  const MAX_PENDING = 6;
+  // A 24fps source yields fewer output frames than duration*fps, so cap the
+  // expectation at the number of frames actually available.
+  const expectedFrames = Math.max(1, Math.min(
+    Math.ceil((duration || 0) * outputFps),
+    samples.video.length || Number.MAX_SAFE_INTEGER,
+  ));
+  const pending = [];
+  let inFlight = 0;
   let decoderError = null;
+  let encoderError = null;
+  let notifyFrame;
+  let resolveDecoderFailure;
+  let resolveEncoderFailure;
+  let frameAvailable = new Promise((resolve) => { notifyFrame = resolve; });
+  const decoderFailure = new Promise((resolve) => { resolveDecoderFailure = resolve; });
+  const encoderFailure = new Promise((resolve) => { resolveEncoderFailure = resolve; });
+  const signalFrame = () => {
+    notifyFrame?.();
+    notifyFrame = null;
+  };
   const decoder = new VideoDecoder({
-    output: (frame) => decodedFrames.push(frame),
-    error: (error) => { decoderError = error; },
+    output: (frame) => {
+      inFlight = Math.max(0, inFlight - 1);
+      if (pending.length >= MAX_PENDING) {
+        frame.close();
+        decoderError = new Error('The WebCodecs decoder exceeded its bounded frame queue.');
+        resolveDecoderFailure();
+        signalFrame();
+        return;
+      }
+      pending.push(frame);
+      signalFrame();
+      frameAvailable = new Promise((resolve) => { notifyFrame = resolve; });
+    },
+    error: (error) => {
+      decoderError = error;
+      resolveDecoderFailure();
+      signalFrame();
+    },
   });
-  decoder.configure(videoConfig);
+  let encoder = null;
+  const checkDecoderError = () => {
+    if (decoderError) throw new Error(`WebCodecs could not decode this video: ${decoderError.message || decoderError}`);
+  };
+  const checkEncoderError = () => {
+    if (encoderError) throw new Error(`WebCodecs could not encode this video: ${encoderError.message || encoderError}`);
+  };
 
   try {
-    const totalSamples = samples.video.length;
-    for (let index = 0; index < totalSamples; index += 1) {
-      if (decoderError) throw new Error(`WebCodecs could not decode this video: ${decoderError.message || decoderError}`);
-      const sample = samples.video[index];
-      const timescale = Math.max(1, Number(videoTrack.timescale));
-      const timestamp = Math.max(0, Math.round(Number(sample.cts) / timescale * 1_000_000));
-      const sampleDuration = Math.max(1, Math.round(Number(sample.duration) / timescale * 1_000_000));
-      const data = sample.data instanceof ArrayBuffer ? new Uint8Array(sample.data) : new Uint8Array(sample.data.buffer, sample.data.byteOffset, sample.data.byteLength);
-      decoder.decode(new EncodedVideoChunk({ type: sample.is_sync ? 'key' : 'delta', timestamp, duration: sampleDuration, data }));
-      if (index % 20 === 0 || index === totalSamples - 1) report(onProgress, 'decode', (index + 1) / Math.max(1, totalSamples));
-    }
-    await decoder.flush();
-    if (decoderError) throw new Error(`WebCodecs could not decode this video: ${decoderError.message || decoderError}`);
-    if (!decodedFrames.length) throw new Error('WebCodecs decoded no video frames from this MP4.');
-    decodedFrames.sort((a, b) => a.timestamp - b.timestamp);
-
-    let previousTimestamp = -1;
+    decoder.configure(videoConfig);
     let encodedFrames = 0;
-    let encoderError = null;
+    let lastSlot = -1;
+    let nextSample = 0;
+    let lastProgressAt = performance.now();
+    const encodeStartedAt = lastProgressAt;
+    const frameDuration = Math.max(1, Math.round(1_000_000 / outputFps));
     const makeEncoder = () => new VideoEncoder({
       output: (chunk, metadata) => {
         if (encoderError) return;
-        try { muxer.addVideoChunk(chunk, metadata); } catch (error) { encoderError = error; }
+        try { muxer.addVideoChunk(chunk, metadata); } catch (error) {
+          encoderError = error;
+          resolveEncoderFailure();
+        }
       },
-      error: (error) => { encoderError = error; },
+      error: (error) => {
+        encoderError = error;
+        resolveEncoderFailure();
+      },
     });
-    let encoder = makeEncoder();
+    encoder = makeEncoder();
     try {
-      try {
-        encoder.configure(encoderConfig);
-      } catch (hardwareError) {
-        if (encoderConfig.hardwareAcceleration !== 'prefer-hardware') {
-          throw new Error(`Could not configure the WebCodecs H.264 encoder: ${hardwareError.message || hardwareError}`);
-        }
-        encoder.close();
-        const softwareConfig = { ...baseEncoderConfig, hardwareAcceleration: 'prefer-software' };
-        const softwareSupport = await VideoEncoder.isConfigSupported(softwareConfig);
-        if (!softwareSupport.supported) {
-          throw new Error(`Hardware H.264 encoding failed and this browser has no supported software fallback. ${hardwareError.message || hardwareError}`);
-        }
-        encoder = makeEncoder();
-        try {
-          encoder.configure(softwareConfig);
-        } catch (softwareError) {
-          throw new Error(`Both hardware and software H.264 encoder setup failed. Hardware: ${hardwareError.message || hardwareError}; software: ${softwareError.message || softwareError}`);
-        }
+      encoder.configure(encoderConfig);
+    } catch (hardwareError) {
+      if (encoderConfig.hardwareAcceleration !== 'prefer-hardware') {
+        throw new Error(`Could not configure the WebCodecs H.264 encoder: ${hardwareError.message || hardwareError}`);
       }
-      report(onProgress, 'encode', 0);
-      for (const sourceFrame of decodedFrames) {
-        if (encoderError) throw new Error(`WebCodecs could not encode this video: ${encoderError.message || encoderError}`);
+      encoder.close();
+      const softwareConfig = { ...baseEncoderConfig, hardwareAcceleration: 'prefer-software' };
+      const softwareSupport = await VideoEncoder.isConfigSupported(softwareConfig);
+      checkDecoderError();
+      checkEncoderError();
+      if (!softwareSupport.supported) {
+        throw new Error(`Hardware H.264 encoding failed and this browser has no supported software fallback. ${hardwareError.message || hardwareError}`);
+      }
+      encoder = makeEncoder();
+      try {
+        encoder.configure(softwareConfig);
+      } catch (softwareError) {
+        throw new Error(`Both hardware and software H.264 encoder setup failed. Hardware: ${hardwareError.message || hardwareError}; software: ${softwareError.message || softwareError}`);
+      }
+    }
+
+    report(onProgress, 'encode', 0);
+    const consumeFrame = async (sourceFrame) => {
+      try {
+        checkDecoderError();
+        checkEncoderError();
         const sourceTimeSeconds = sourceFrame.timestamp / 1_000_000;
         const timeSeconds = Math.max(0, Math.min(duration || Infinity, sourceTimeSeconds - timelineOrigin));
-        let timestamp = Math.max(0, Math.round(sourceTimeSeconds * 1_000_000));
-        if (timestamp <= previousTimestamp) timestamp = previousTimestamp + 1;
-        previousTimestamp = timestamp;
+        // Quantise onto the output frame grid and emit at most one frame per slot.
+        // Deriving the slot from the source timestamp (instead of advancing a
+        // counter) keeps the output duration equal to the source duration for any
+        // input rate: a 24fps source no longer gets sped up to 30fps, and a 60fps
+        // source still collapses to 30 with no drift.
+        const slot = Math.round(timeSeconds * outputFps);
+        if (slot <= lastSlot) return;
+        lastSlot = slot;
 
         context.clearRect(0, 0, outputWidth, outputHeight);
         context.drawImage(sourceFrame, 0, 0, outputWidth, outputHeight);
         drawFrame(context, timeSeconds);
-        const outputFrame = new VideoFrame(canvas, { timestamp, duration: Math.max(1, Math.round(1_000_000 / outputFps)) });
-        await waitForEncoderCapacity(encoder);
-        encoder.encode(outputFrame, { keyFrame: encodedFrames === 0 || encodedFrames % Math.max(1, Math.round(outputFps * 2)) === 0 });
-        outputFrame.close();
+        const timestamp = Math.round(slot / outputFps * 1_000_000);
+        const outputFrame = new VideoFrame(canvas, { timestamp, duration: frameDuration });
+        try {
+          await Promise.race([waitForEncoderCapacity(encoder), encoderFailure]);
+          checkDecoderError();
+          checkEncoderError();
+          encoder.encode(outputFrame, {
+            keyFrame: encodedFrames === 0 || encodedFrames % Math.max(1, Math.round(outputFps * 2)) === 0,
+          });
+          encodedFrames += 1;
+          const now = performance.now();
+          if (encodedFrames % 10 === 0 || now - lastProgressAt >= 400) {
+            const elapsedMs = Math.max(1, now - encodeStartedAt);
+            const elapsedSeconds = elapsedMs / 1000;
+            const rate = encodedFrames / elapsedSeconds;
+            const etaMs = rate > 0 ? Math.max(0, ((expectedFrames - encodedFrames) / rate) * 1000) : 0;
+            report(onProgress, 'encode', encodedFrames / expectedFrames, {
+              framesDone: encodedFrames,
+              framesTotal: expectedFrames,
+              elapsedMs,
+              fps: rate,
+              etaMs,
+            });
+            lastProgressAt = now;
+          }
+        } finally {
+          outputFrame.close();
+        }
+      } finally {
         sourceFrame.close();
-        encodedFrames += 1;
-        if (encodedFrames % 10 === 0 || encodedFrames === decodedFrames.length) report(onProgress, 'encode', encodedFrames / Math.max(1, decodedFrames.length));
       }
-      await encoder.flush();
-      if (encoderError) throw new Error(`WebCodecs could not encode this video: ${encoderError.message || encoderError}`);
-    } finally {
-      if (encoder.state !== 'closed') encoder.close();
+    };
+
+    const totalSamples = samples.video.length;
+    while (nextSample < totalSamples) {
+      checkDecoderError();
+      checkEncoderError();
+      while (
+        nextSample < totalSamples
+        && pending.length + inFlight < MAX_PENDING
+        && decoder.decodeQueueSize < MAX_PENDING
+      ) {
+        checkDecoderError();
+        checkEncoderError();
+        const sample = samples.video[nextSample];
+        const timescale = Math.max(1, Number(videoTrack.timescale));
+        const timestamp = Math.max(0, Math.round(Number(sample.cts) / timescale * 1_000_000));
+        const sampleDuration = Math.max(1, Math.round(Number(sample.duration) / timescale * 1_000_000));
+        const data = sample.data instanceof ArrayBuffer
+          ? new Uint8Array(sample.data)
+          : new Uint8Array(sample.data.buffer, sample.data.byteOffset, sample.data.byteLength);
+        decoder.decode(new EncodedVideoChunk({
+          type: sample.is_sync ? 'key' : 'delta',
+          timestamp,
+          duration: sampleDuration,
+          data,
+        }));
+        inFlight += 1;
+        nextSample += 1;
+      }
+
+      if (pending.length) {
+        await consumeFrame(pending.shift());
+        checkDecoderError();
+        checkEncoderError();
+      } else if (nextSample < totalSamples) {
+        await Promise.race([frameAvailable, decoderFailure]);
+        checkDecoderError();
+        checkEncoderError();
+      }
     }
 
-    if (!audioFirst) addPassthroughAudio(muxer, samples.audio, audioTrack, audioConfig, onProgress);
-    report(onProgress, 'mux', 0);
-    muxer.finalize();
-    if (!target.buffer?.byteLength) throw new Error('The MP4 muxer produced an empty output file.');
-    report(onProgress, 'mux', 1);
-    return new Blob([target.buffer], { type: 'video/mp4' });
-  } finally {
-    for (const frame of decodedFrames) {
-      if (frame && frame.close) { try { frame.close(); } catch { /* Already closed while encoding. */ } }
+    try {
+      await decoder.flush();
+    } catch (error) {
+      if (decoderError) checkDecoderError();
+      throw new Error(`WebCodecs could not decode this video: ${error.message || error}`);
     }
+    checkDecoderError();
+    while (pending.length) {
+      checkDecoderError();
+      checkEncoderError();
+      await consumeFrame(pending.shift());
+      checkDecoderError();
+      checkEncoderError();
+    }
+    await Promise.race([encoder.flush(), encoderFailure]);
+    checkEncoderError();
+    if (encodedFrames === 0) throw new Error('WebCodecs decoded no video frames from this MP4.');
+    const finishedAt = performance.now();
+    const elapsedMs = Math.max(1, finishedAt - encodeStartedAt);
+    const elapsedSeconds = elapsedMs / 1000;
+    const rate = encodedFrames / elapsedSeconds;
+    report(onProgress, 'encode', encodedFrames / expectedFrames, {
+      framesDone: encodedFrames,
+      framesTotal: expectedFrames,
+      elapsedMs,
+      fps: rate,
+      etaMs: rate > 0 ? Math.max(0, ((expectedFrames - encodedFrames) / rate) * 1000) : 0,
+    });
+  } finally {
+    if (encoder && encoder.state !== 'closed') encoder.close();
     if (decoder.state !== 'closed') decoder.close();
+    for (const frame of pending) {
+      try { frame.close(); } catch { /* The frame may already have been closed by the decoder. */ }
+    }
+    pending.length = 0;
   }
+
+  if (!audioFirst) addPassthroughAudio(muxer, samples.audio, audioTrack, audioConfig, onProgress);
+  report(onProgress, 'mux', 0);
+  muxer.finalize();
+  if (!target.buffer?.byteLength) throw new Error('The MP4 muxer produced an empty output file.');
+  report(onProgress, 'mux', 1);
+  return new Blob([target.buffer], { type: 'video/mp4' });
 }

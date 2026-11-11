@@ -35,6 +35,10 @@ app.js         one drawCaptionLayer() used by BOTH preview and render
                  replaceTranscriptText() re-aligns the existing timings
 render.js      mp4box demux -> VideoDecoder -> canvas -> VideoEncoder
                 (avc1.640028) -> mp4-muxer -> Blob -> download
+                ONE streaming pass with backpressure (max 6 frames in flight),
+                so memory stays flat regardless of source length or resolution.
+                Frames are quantised onto the output fps grid, which preserves
+                duration for any input rate (24/25/30/60fps).
 ```
 
 Preview and export share the same canvas drawing function on purpose. The old
@@ -89,16 +93,20 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | Output format | H.264 1080x1920 30 fps + AAC 44.1 kHz mono, 24.02 s |
 | Captions actually burned in | caption band 4.42% pixels changed vs 0.00% in a control band |
 | Logic tests (`node --test`) | 13/13 pass |
+| 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
+| 24fps source | output duration 24.000s — duration and caption sync preserved |
+| Render progress | label advances with frames done/total, fps and ETA |
 
 ## Not verified
 
-- **Speed on normal hardware.** The test box had no GPU. Browser rendering uses
-  the viewer's hardware, so a weak laptop will be slower than this measurement
-  suggests. Time it on a real laptop before trusting any performance claim.
+- Output frame pacing: timestamps sit on the 1/30 s grid, so a 24fps source
+  produces slightly uneven spacing. Duration and caption sync are exact, but
+  the stream is not strictly constant-frame-rate for sub-30fps inputs.
+- **Speed on other hardware.** The test box has no GPU; these numbers are a
+  software-only floor. A weak laptop may be slower, a GPU machine faster.
 - **iOS Safari.** WebCodecs encoder support is the weakest link there. Unproven.
 - **Containers other than MP4/H.264+AAC.** MOV/HEVC is detected and rejected
   with an explanation rather than handled.
-- **Long or 4K inputs.** Untested.
 - Audio is AAC passthrough, never re-encoded. A non-AAC audio track is rejected
   by design (re-encoding audio in the browser is a separate project).
 

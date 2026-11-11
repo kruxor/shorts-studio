@@ -711,7 +711,11 @@ async function renderCurrentVideo() {
       fps: 30,
       onProgress: progress => {
         if (cancelRequested) throw new DOMException('Render cancelled by the user.', 'AbortError');
-        setProgress('Rendering captioned MP4…', progressPercent(progress));
+        const detail = progress?.detail;
+        const label = detail
+          ? `Rendering captioned MP4… ${detail.framesDone}/${detail.framesTotal} frames · ${Math.round(detail.fps)} fps · ~${Math.round(Math.max(0, Number(detail.etaMs) || 0) / 1000)}s left`
+          : 'Rendering captioned MP4…';
+        setProgress(label, progressPercent(progress));
       },
     });
     if (cancelRequested) throw new DOMException('Render cancelled by the user.', 'AbortError');
