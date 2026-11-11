@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101114">
+  <meta name="description" content="Create and render captioned short videos privately in your browser.">
+  <title>Shorts Studio — local caption editor</title>
+  <link rel="stylesheet" href="./css/app.css">
+  <script type="importmap">
+    {"imports":{"onnxruntime-common":"./vendor/common/esm/index.js","onnxruntime-web":"./vendor/ort/ort.bundle.min.mjs"}}
+  </script>
+  <script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Shorts Studio home"><span class="brand-mark">S</span><span>Shorts Studio</span></a>
+    <p class="privacy-note"><span class="privacy-dot" aria-hidden="true"></span> Your files stay on this device. Nothing is uploaded.</p>
+  </header>
+
+  <main class="app-shell">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">PRIVATE, IN-BROWSER EDITING</p>
+        <h1 id="page-title">Make every word count.</h1>
+        <p class="intro-copy">Transcribe, style, and burn captions into a short video — all on your machine.</p>
+      </div>
+      <div class="format-chip"><span aria-hidden="true">▣</span> MP4 · H.264</div>
+    </section>
+
+    <section class="panel input-panel" aria-labelledby="source-heading">
+      <div class="panel-heading">
+        <div><p class="eyebrow">01 · SOURCE</p><h2 id="source-heading">Choose a video</h2></div>
+        <span class="step-number">01</span>
+      </div>
+      <label class="drop-zone" id="dropZone" for="fileInput" tabindex="0">
+        <input id="fileInput" type="file" accept="video/mp4,.mp4" hidden>
+        <span class="upload-icon" aria-hidden="true">↑</span>
+        <span class="drop-title">Drop your MP4 here</span>
+        <span class="drop-subtitle">or <span class="text-link">browse files</span> · MP4 with H.264 video</span>
+        <span class="drop-footnote">No upload, no account, no external fonts.</span>
+      </label>
+      <div class="source-row">
+        <div class="file-summary" id="fileSummary" aria-live="polite"><span class="file-icon" aria-hidden="true">▱</span><span>No video selected</span></div>
+        <label class="model-picker" for="modelSelect"><span>Transcription model</span>
+          <select id="modelSelect" aria-label="Transcription model">
+            <option value="base.en">Base English · faster</option>
+            <option value="small.en">Small English · better accuracy</option>
+          </select>
+        </label>
+      </div>
+      <button class="button button-primary" id="startButton" type="button" disabled>Decode &amp; transcribe <span aria-hidden="true">→</span></button>
+    </section>
+
+    <section class="panel progress-panel" aria-labelledby="progress-heading">
+      <div class="panel-heading compact-heading">
+        <div><p class="eyebrow">WORKFLOW</p><h2 id="progress-heading">Your project</h2></div>
+        <span class="status-pill" id="workflowStatus">Waiting for a video</span>
+      </div>
+      <ol class="stage-list" id="stageList" aria-label="Project stages">
+        <li class="stage-item" data-stage="decode"><span class="stage-icon">1</span><span class="stage-label">Decode</span><span class="stage-detail">Read video &amp; audio</span></li>
+        <li class="stage-item" data-stage="transcribe"><span class="stage-icon">2</span><span class="stage-label">Transcribe</span><span class="stage-detail">Create timed words</span></li>
+        <li class="stage-item" data-stage="review"><span class="stage-icon">3</span><span class="stage-label">Review</span><span class="stage-detail">Edit &amp; style captions</span></li>
+        <li class="stage-item" data-stage="render"><span class="stage-icon">4</span><span class="stage-label">Render</span><span class="stage-detail">Export captioned MP4</span></li>
+      </ol>
+      <div class="task-progress" id="taskProgress" hidden>
+        <div class="progress-copy"><span id="progressLabel">Working…</span><span id="progressPercent">0%</span></div>
+        <progress id="progressBar" max="100" value="0">0%</progress>
+      </div>
+    </section>
+
+    <div class="notice notice-error" id="errorNotice" role="alert" hidden></div>
+    <div class="notice notice-info" id="infoNotice" role="status" hidden></div>
+
+    <section class="workspace" id="workspace" hidden aria-label="Caption editor">
+      <section class="panel preview-panel" aria-labelledby="preview-heading">
+        <div class="panel-heading compact-heading">
+          <div><p class="eyebrow">03 · REVIEW</p><h2 id="preview-heading">Live preview</h2></div>
+          <span class="preview-resolution">9:16 · 1080 × 1920</span>
+        </div>
+        <div class="preview-stage" id="previewStage">
+          <canvas id="previewCanvas" aria-label="Video preview with captions"></canvas>
+          <div class="preview-empty" id="previewEmpty">Your video preview will appear here.</div>
+        </div>
+        <video id="sourceVideo" playsinline muted preload="metadata" aria-hidden="true"></video>
+        <div class="preview-controls">
+          <button class="button button-quiet" id="playButton" type="button" disabled aria-label="Play preview">▶ <span>Play</span></button>
+          <input id="timeSlider" type="range" min="0" max="1" step="0.01" value="0" disabled aria-label="Preview position">
+          <span class="time-readout" id="timeReadout">0:00 / 0:00</span>
+        </div>
+      </section>
+
+      <section class="panel captions-panel" aria-labelledby="captions-heading">
+        <div class="panel-heading compact-heading">
+          <div><p class="eyebrow">WORD-LEVEL TIMING</p><h2 id="captions-heading">Caption groups</h2></div>
+          <span class="count-pill" id="groupCount">0 groups</span>
+        </div>
+        <p class="section-hint">Edit a group and apply it to re-align changed words across the timed transcript.</p>
+        <div class="caption-list" id="captionList" aria-live="polite"></div>
+      </section>
+
+      <section class="panel style-panel" aria-labelledby="style-heading">
+        <div class="panel-heading compact-heading">
+          <div><p class="eyebrow">MAKE IT YOURS</p><h2 id="style-heading">Caption style</h2></div>
+          <button class="button button-quiet reset-button" id="resetStyle" type="button">Reset</button>
+        </div>
+        <div class="style-grid">
+          <label class="control-card range-control"><span class="control-top"><span>Font size</span><output id="fontSizeOutput">108</output></span><input id="font_size" type="range" min="24" max="180" step="1"></label>
+          <label class="control-card range-control"><span class="control-top"><span>Vertical position</span><output id="yPositionOutput">66%</output></span><input id="y_position" type="range" min="0.1" max="0.9" step="0.01"></label>
+          <label class="control-card range-control"><span class="control-top"><span>Outline thickness</span><output id="strokeWidthOutput">4.5</output></span><input id="stroke_width" type="range" min="0" max="12" step="0.5"></label>
+          <label class="control-card range-control"><span class="control-top"><span>Minimum words</span><output id="minWordsOutput">2</output></span><input id="min_words" type="range" min="1" max="8" step="1"></label>
+          <label class="control-card range-control"><span class="control-top"><span>Maximum words</span><output id="maxWordsOutput">3</output></span><input id="max_words" type="range" min="1" max="8" step="1"></label>
+          <label class="control-card range-control"><span class="control-top"><span>Maximum characters</span><output id="maxCharsOutput">22</output></span><input id="max_chars" type="range" min="8" max="80" step="1"></label>
+          <label class="control-card range-control"><span class="control-top"><span>Pause split</span><output id="pauseSplitOutput">0.65 s</output></span><input id="pause_split" type="range" min="0.1" max="3" step="0.05"></label>
+          <label class="control-card color-control"><span>Caption color</span><span class="color-input-wrap"><input id="caption_color" type="color" aria-label="Caption color"><output id="captionColorOutput">#ffffff</output></span></label>
+          <label class="control-card color-control"><span>Spoken word highlight</span><span class="color-input-wrap"><input id="highlight_color" type="color" aria-label="Highlight color"><output id="highlightColorOutput">#fff34a</output></span></label>
+          <label class="control-card color-control"><span>Outline color</span><span class="color-input-wrap"><input id="stroke_color" type="color" aria-label="Outline color"><output id="strokeColorOutput">#000000</output></span></label>
+          <label class="control-card toggle-control"><span><strong>Highlight spoken word</strong><small>Track the word at the current time</small></span><input id="highlight_enabled" type="checkbox" role="switch"></label>
+        </div>
+      </section>
+
+      <section class="panel presets-panel" aria-labelledby="presets-heading">
+        <div class="panel-heading compact-heading">
+          <div><p class="eyebrow">PORTABLE SETTINGS</p><h2 id="presets-heading">Presets</h2></div>
+          <span class="count-pill" id="presetCount">0 saved</span>
+        </div>
+        <div class="preset-save-row">
+          <label class="visually-hidden" for="presetName">Preset name</label>
+          <input id="presetName" type="text" maxlength="80" placeholder="Name this preset" autocomplete="off">
+          <button class="button button-secondary" id="savePreset" type="button">Save preset</button>
+        </div>
+        <div class="preset-list" id="presetList"><p class="empty-copy">Your saved presets stay in this browser.</p></div>
+        <div class="preset-actions">
+          <button class="button button-quiet" id="exportPresets" type="button">Export JSON</button>
+          <button class="button button-quiet" id="importPresetsButton" type="button">Import JSON</button>
+          <input id="importPresetsFile" type="file" accept="application/json,.json" hidden>
+        </div>
+      </section>
+
+      <section class="panel render-panel" aria-labelledby="render-heading">
+        <div class="panel-heading compact-heading">
+          <div><p class="eyebrow">04 · FINISH</p><h2 id="render-heading">Render your video</h2></div>
+          <span class="format-chip small-chip">MP4 · H.264</span>
+        </div>
+        <p class="section-hint">Captions are drawn onto every frame. Rendering runs locally and may take a while.</p>
+        <div class="render-actions">
+          <button class="button button-primary" id="renderButton" type="button" disabled>Render MP4 <span aria-hidden="true">→</span></button>
+          <button class="button button-danger" id="cancelRender" type="button" hidden>Cancel render</button>
+          <a class="button button-secondary download-link" id="downloadLink" href="#" download="shorts-studio-captioned.mp4" hidden>Download MP4 ↓</a>
+        </div>
+      </section>
+    </section>
+    <footer class="page-footer">Everything is processed locally in your browser. Keep a copy of your original video.</footer>
+  </main>
+</body>
+</html>

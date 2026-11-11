@@ -1,0 +1,10 @@
+node_modules/
+
+# Vendored Whisper weights are large (320 MB) and reproducible.
+# Fetch them with: ./scripts/fetch-models.sh
+public/models/
+
+# Local test fixtures (generated clips, downloaded speech samples)
+tests/fixtures/
+tests/e2e/output/
+*.log

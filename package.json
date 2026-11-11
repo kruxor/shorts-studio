@@ -1,0 +1,17 @@
+{
+  "name": "shorts-studio-static",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.2",
+    "mp4-muxer": "^5.2.2",
+    "mp4box": "^0.5.4"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.0"
+  }
+}
