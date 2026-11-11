@@ -123,6 +123,13 @@ Scripted in `deploy/`; the target host is still to be chosen.
 3. On the server as root: `sudo bash setup-vhost.sh` — writes the vhost,
    reloads nginx, then asks certbot for a certificate. Safe to re-run; it skips
    TLS until DNS resolves.
+   On a **CloudPanel** host, create the site as a **Static Site** instead (no
+   PHP — the app has no server-side anything) and paste
+   `deploy/cloudpanel-locations.conf` into the Vhost editor, above `location /`.
+   Delete CloudPanel's own static-asset `expires 1y` block when you do: it
+   caches `app.js` for a year so releases never land, and it does not match
+   `.mjs`, which then gets served as `application/octet-stream` and the app
+   boots dead. Use CloudPanel's Let's Encrypt UI for TLS.
 4. `E2E_URL=https://shorts.kruxor.com/ node tests/e2e/vhost-boot.mjs` — the one
    that catches a dead page behind a healthy-looking server.
 5. `E2E_URL=https://shorts.kruxor.com/ node tests/e2e/file-drop.mjs`
