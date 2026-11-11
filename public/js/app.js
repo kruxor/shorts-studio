@@ -631,7 +631,7 @@ async function startWorkflow() {
   if (!selectedFile || elements.startButton.disabled) return;
   const model = elements.modelSelect.value;
   if (!Object.hasOwn(MODELS, model)) {
-    showError('Choose a supported transcription model: base.en or small.en.');
+    showError('Choose a supported transcription model: base.en.');
     return;
   }
   clearNotices();

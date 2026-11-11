@@ -61,20 +61,50 @@ python3 -m http.server 8099 -d public
 # 443 and 8443 are already taken by tailscaled on this host.
 ```
 
-Deploy by copying `public/` behind HTTPS. There is no build step.
 
 ## Models
 
-Whisper weights are gitignored (320 MB) and reproducible:
+Whisper weights are gitignored and reproducible:
 
 ```bash
-./scripts/fetch-models.sh
+./scripts/fetch-models.sh              # base.en only, 77 MB
+FETCH_SMALL=1 ./scripts/fetch-models.sh  # also small.en, +242 MB
 ```
+
+The served build ships **base.en only**. small.en costs 242 MB per first-time
+visitor for accuracy that did not matter on English shorts; re-adding it means
+re-adding an entry to `MODELS` in `public/js/transcribe.js` and an `<option>`.
 
 The script fetches from the `Xenova/*` repos specifically, and fails loudly if
 the decoder has no cross-attention outputs. This matters: the `openai/whisper-*`
 ONNX re-exports lack them, and word-level timestamps fail with
 `Model outputs must contain cross attentions to extract timestamps.`
+
+## Hosting
+
+First visit transfers ~112 MB (77 MB weights + 35 MB ONNX runtime + app).
+
+**Serve the weights yourself; do not point the app at a CDN.** Hugging Face
+does host these files, but fetching them at runtime reintroduces a third-party
+dependency and a failure mode this app was built to avoid, and it makes every
+visitor's browser call out to someone else's server on a page that advertises
+"nothing leaves your machine". The weights are static files — nginx serves them
+fine. If traffic ever justifies it, put Cloudflare in front of your own origin
+rather than swapping the source.
+
+Caching matters more than bandwidth here (see `deploy/nginx-shorts-studio.conf`):
+
+| Path | Header | Why |
+|---|---|---|
+| `/models/`, `/vendor/` | `max-age=31536000, immutable` | pinned per build; 112 MB must not re-download |
+| `/assets/*.{ttf,woff2,...}` | `max-age=31536000, immutable` | fonts never change |
+| `*.html`, `*.js`, `*.css` | `no-cache` | small, and updates must land immediately |
+
+`immutable` means browsers stop revalidating, so **if you replace a model or
+runtime file, bump its directory name** (`whisper-base.en-v2`, `ort-v2`).
+
+Deploy by copying `public/` behind HTTPS. There is no build step. HTTPS is not
+optional: WebCodecs requires a secure context.
 
 ## Verified
 

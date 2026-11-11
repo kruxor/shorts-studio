@@ -1,8 +1,10 @@
 import { pipeline, env } from '../vendor/transformers/transformers.web.js';
 
 export const MODELS = {
+  // The public build ships base.en only: 77 MB of weights versus 242 MB for
+  // small.en, and accuracy on English shorts did not justify the extra 242 MB
+  // that every first-time visitor would have to download.
   'base.en': 'whisper-base.en',
-  'small.en': 'whisper-small.en',
 };
 
 // Transformers and ONNX Runtime must use only assets shipped with this static app.
@@ -86,7 +88,7 @@ export async function transcribeAudio(samples, { model = 'base.en', onProgress }
     throw new TypeError('Whisper input must be a non-empty Float32Array of 16 kHz mono samples.');
   }
   if (!Object.hasOwn(MODELS, model)) {
-    throw new Error(`Unknown Whisper model "${model}". Choose "base.en" or "small.en".`);
+    throw new Error(`Unknown Whisper model "${model}". Choose "base.en".`);
   }
 
   const modelDirectory = MODELS[model];

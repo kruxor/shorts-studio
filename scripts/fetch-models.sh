@@ -45,5 +45,10 @@ fetch_model() {
 
 echo "Fetching Whisper models into $DEST"
 fetch_model "Xenova/whisper-base.en"  "whisper-base.en"
-fetch_model "Xenova/whisper-small.en" "whisper-small.en"
+# The served build ships base.en only (77 MB). small.en is 242 MB, so it is
+# opt-in for local experiments: FETCH_SMALL=1 ./scripts/fetch-models.sh
+# Re-adding it to the app also means re-adding it to MODELS in transcribe.js.
+if [ "${FETCH_SMALL:-0}" = "1" ]; then
+  fetch_model "Xenova/whisper-small.en" "whisper-small.en"
+fi
 echo "Done."
