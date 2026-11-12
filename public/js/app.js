@@ -5,6 +5,7 @@ import { groupWords, activeGroup, spokenWordIndex, flattenGroups } from './capti
 import { DEFAULT_STYLE, FONTS, normalizeStyle, clampStyleValue } from './style.js';
 import { validatePreset, serializePresets, parsePresets } from './presets.js';
 import { transcriptText, replaceTranscriptText } from './alignment.js';
+import { buildWordTimings, wordTimingsFileName } from './word-export.js';
 
 const OUTPUT_WIDTH = 1080;
 const OUTPUT_HEIGHT = 1920;
@@ -29,7 +30,7 @@ const elements = {
   transcriptEditor: $('#transcriptEditor'), applyTranscriptText: $('#applyTranscriptText'),
   revertTranscriptText: $('#revertTranscriptText'), transcriptEditStatus: $('#transcriptEditStatus'),
   transcriptEditError: $('#transcriptEditError'), fontSelect: $('#font'),
-  cancelRender: $('#cancelRender'), downloadLink: $('#downloadLink'), presetName: $('#presetName'),
+  cancelRender: $('#cancelRender'), downloadLink: $('#downloadLink'), exportWords: $('#exportWords'), presetName: $('#presetName'),
   savePreset: $('#savePreset'), presetList: $('#presetList'), presetCount: $('#presetCount'),
   exportPresets: $('#exportPresets'), importPresetsButton: $('#importPresetsButton'),
   importPresetsFile: $('#importPresetsFile'), resetStyle: $('#resetStyle'),
@@ -721,6 +722,32 @@ async function startWorkflow() {
   }
 }
 
+// Exports the flat word list, not the caption groups: the consumer of this file
+// expects one entry per spoken word. Grouping/line-break choices live in the app
+// and must not leak into timings that another tool will re-group itself.
+function exportWordTimings() {
+  const words = flattenGroups(groups);
+  if (!words.length) {
+    showError('Transcribe a video first — there are no word timings to export.');
+    return;
+  }
+  try {
+    const document_ = buildWordTimings({ words, sourceVideo: selectedFile?.name || '' });
+    const blob = new Blob([JSON.stringify(document_, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = wordTimingsFileName(selectedFile?.name);
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showInfo(`Exported ${document_.words.length} word timings as ${anchor.download}.`);
+  } catch (error) {
+    showError(humanError(error, 'Could not build the word timing file.'));
+  }
+}
+
 async function renderCurrentVideo() {
   if (!selectedFile || !transcript?.words?.length || renderInProgress) return;
   clearNotices();
@@ -873,6 +900,7 @@ function installEvents() {
   });
   elements.timeSlider.addEventListener('change', () => { isScrubbing = false; });
   elements.renderButton.addEventListener('click', renderCurrentVideo);
+  elements.exportWords.addEventListener('click', exportWordTimings);
   elements.cancelRender.addEventListener('click', () => {
     if (!renderInProgress) return;
     cancelRequested = true;

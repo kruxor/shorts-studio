@@ -28,6 +28,8 @@ captions.js    ported grouping rules: min/max words, max chars,
                 pause_split, sentence-punctuation splits
 style.js       ported style defaults + clamps (24-180 font size, etc.)
 alignment.js   edit transcript text without losing word timings
+word-export.js word-timing JSON (schema v1, "Video Caption Popover") for
+               external tools; probability/source path caveats are in the file
 presets.js     IndexedDB presets + JSON export/import
 
 app.js         one drawCaptionLayer() used by BOTH preview and render
@@ -158,6 +160,7 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | Preview stays visible | pinned at 12px while the style controls scroll past; controls sit beside it, not below |
 | Drag to position | dragged to 22% height; exported MP4 has 100% of caption ink in the top third, 0% at the old 66% |
 | Model unload | pipeline cache cleared after a run (0 cached); next run rebuilds in 9.8s |
+| Word timing export | 53 words, schema v1, filename derived from the video, monotonic 2.00s to 23.96s |
 | 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
 | 24fps source | output duration 24.000s — duration and caption sync preserved |
 | Render progress | label advances with frames done/total, fps and ETA |
