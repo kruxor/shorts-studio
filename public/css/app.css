@@ -120,7 +120,7 @@ progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
 .notice-info { border: 1px solid #49416b; color: #ded4ff; background: #252132; }
 
 .workspace { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(330px, .92fr); gap: 16px; align-items: start; }
-.preview-panel { grid-column: 1; grid-row: 1 / -1; }
+.preview-panel { grid-column: 1; grid-row: 1 / -1; /* Sized by viewport height, not width: at 430px wide the 9:16 preview is 764px tall, which forced a fullscreen browser just to see the video. Width now follows from the height cap, so shrinking the window shrinks the preview. */ --preview-h: min(72vh, 620px); }
 .captions-panel { grid-column: 2; grid-row: 1; }
 /* Controls live in the right column beside the preview, not full width beneath
    it: a full-width panel below forced the user to scroll the video off-screen to
@@ -128,17 +128,22 @@ progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
 .style-panel { grid-column: 2; grid-row: 2; }
 .presets-panel { grid-column: 2; grid-row: 3; }
 .render-panel { grid-column: 2; grid-row: 4; }
+.render-progress { margin-top: 13px; }
+/* Holds a line of text even when empty, so the panel does not jump when a render
+   starts or finishes. */
+.render-status { min-height: 15px; margin: 9px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.render-status.is-error { color: #ffb3bb; }
 .style-panel .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.preview-stage { position: relative; width: 100%; max-width: 430px; margin: 0 auto; overflow: hidden; border: 1px solid #373942; border-radius: 12px; background: #08090b; aspect-ratio: 9 / 16; }
+.preview-stage { position: relative; width: min(100%, calc(var(--preview-h) * 9 / 16)); margin: 0 auto; overflow: hidden; border: 1px solid #373942; border-radius: 12px; background: #08090b; aspect-ratio: 9 / 16; }
  .preview-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; cursor: grab; touch-action: none; }
 .preview-stage canvas.is-dragging { cursor: grabbing; }
 .preview-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: #727580; text-align: center; font-size: 12px; pointer-events: none; }
 #sourceVideo { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; left: -10px; top: -10px; }
-.preview-controls { display: flex; align-items: center; gap: 10px; max-width: 430px; margin: 12px auto 0; }
+.preview-controls { display: flex; align-items: center; gap: 10px; max-width: calc(var(--preview-h) * 9 / 16); margin: 12px auto 0; }
 .preview-controls .button { min-height: 33px; padding: 7px 10px; }
 #timeSlider { min-width: 35px; flex: 1; accent-color: var(--accent); }
 .time-readout { min-width: 75px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; font-size: 10px; }
-.preview-drag-hint { max-width: 430px; margin: 7px auto 0; color: var(--faint); font-size: 10px; text-align: center; }
+.preview-drag-hint { max-width: calc(var(--preview-h) * 9 / 16); margin: 7px auto 0; color: var(--faint); font-size: 10px; text-align: center; }
 .section-hint { margin: -5px 0 13px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .paragraph-editor { margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid #30323a; }
 .paragraph-editor .panel-heading { margin-bottom: 9px; }

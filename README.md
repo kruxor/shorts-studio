@@ -161,6 +161,8 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
 | 24fps source | output duration 24.000s — duration and caption sync preserved |
 | Render progress | label advances with frames done/total, fps and ETA |
+| Render panel progress | bar lives in the render box; 11 distinct values during a run, final message in the box |
+| Preview scales with window | 620/576/461px tall at 1000/800/640px viewports; controls stay aligned |
 
 ## Not verified
 

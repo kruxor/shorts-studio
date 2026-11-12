@@ -23,6 +23,9 @@ const elements = {
   previewCanvas: $('#previewCanvas'), previewEmpty: $('#previewEmpty'), sourceVideo: $('#sourceVideo'),
   playButton: $('#playButton'), timeSlider: $('#timeSlider'), timeReadout: $('#timeReadout'),
   captionList: $('#captionList'), groupCount: $('#groupCount'), renderButton: $('#renderButton'),
+  renderProgress: $('#renderProgress'), renderProgressLabel: $('#renderProgressLabel'),
+  renderProgressPercent: $('#renderProgressPercent'), renderProgressBar: $('#renderProgressBar'),
+  renderStatus: $('#renderStatus'),
   transcriptEditor: $('#transcriptEditor'), applyTranscriptText: $('#applyTranscriptText'),
   revertTranscriptText: $('#revertTranscriptText'), transcriptEditStatus: $('#transcriptEditStatus'),
   transcriptEditError: $('#transcriptEditError'), fontSelect: $('#font'),
@@ -44,6 +47,10 @@ let previewRaf = 0;
 let lastActiveGroup = -2;
 let isScrubbing = false;
 let renderInProgress = false;
+// The render panel only mirrors progress while a render is actually running;
+// transcription progress belongs to the workflow panel and must not leave a
+// stale 100% bar sitting in the render box before the user clicks Render.
+let renderPanelProgressActive = false;
 let cancelRequested = false;
 let databasePromise;
 let loadedFontFamily = null;
@@ -116,6 +123,22 @@ function setProgress(label, value = 0) {
   elements.progressPercent.textContent = `${percent}%`;
   elements.progressBar.value = percent;
   elements.progressBar.setAttribute('aria-label', `${label}: ${percent}%`);
+
+  // Mirror into the render panel. The workflow panel sits above the editor, so a
+  // long render used to leave the box the user just clicked showing nothing but a
+  // disabled button.
+  if (elements.renderProgress && renderPanelProgressActive) {
+    elements.renderProgress.hidden = false;
+    elements.renderProgressLabel.textContent = label;
+    elements.renderProgressPercent.textContent = `${percent}%`;
+    elements.renderProgressBar.value = percent;
+    elements.renderProgressBar.setAttribute('aria-label', `${label}: ${percent}%`);
+  }
+}
+function setRenderStatus(text, { isError = false } = {}) {
+  if (!elements.renderStatus) return;
+  elements.renderStatus.textContent = text;
+  elements.renderStatus.classList.toggle('is-error', Boolean(isError));
 }
 function progressPercent(value) {
   if (typeof value === 'number') return value <= 1 ? value * 100 : value;
@@ -191,6 +214,10 @@ function setSelectedFile(file) {
   elements.startButton.disabled = false;
   elements.workspace.hidden = true;
   elements.taskProgress.hidden = true;
+  renderPanelProgressActive = false;
+  elements.renderProgress.hidden = true;
+  elements.renderProgressBar.value = 0;
+  setRenderStatus('');
   elements.stageItems.forEach(item => item.classList.remove('is-active', 'is-done'));
   setWorkflowStatus('Ready to decode');
   removeRenderDownload();
@@ -722,6 +749,10 @@ async function renderCurrentVideo() {
   elements.downloadLink.hidden = true;
   setStage('render');
   setWorkflowStatus('Rendering locally');
+  setRenderStatus('');
+  renderPanelProgressActive = true;
+  elements.renderProgress.hidden = false;
+  elements.renderProgressBar.value = 0;
   setProgress('Preparing video renderer…', 0);
   try {
     // Canvas silently substitutes a fallback face if the chosen font has not
@@ -756,20 +787,24 @@ async function renderCurrentVideo() {
     elements.downloadLink.href = renderUrl;
     elements.downloadLink.hidden = false;
     setWorkflowStatus('Render complete');
+    setRenderStatus('Render complete. Download your MP4 below.');
     setProgress('Your captioned MP4 is ready', 100);
   } catch (error) {
     if (cancelRequested || error?.name === 'AbortError') {
       setWorkflowStatus('Render cancelled');
+      setRenderStatus('Render cancelled. Nothing was downloaded.');
       setProgress('Render cancelled', 0);
       showInfo('Render cancelled. Your source file and caption edits are unchanged.');
       setStage('review');
     } else {
       setWorkflowStatus('Render failed');
+      setRenderStatus('Render failed. See the message above.', { isError: true });
       setStage('review');
       showError(`Could not render this video. ${humanError(error, 'Check WebCodecs support and try again.')}`);
     }
   } finally {
     renderInProgress = false;
+    renderPanelProgressActive = false;
     cancelRequested = false;
     elements.cancelRender.hidden = true;
     elements.cancelRender.disabled = false;

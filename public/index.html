@@ -166,6 +166,11 @@
           <button class="button button-danger" id="cancelRender" type="button" hidden>Cancel render</button>
           <a class="button button-secondary download-link" id="downloadLink" href="#" download="shorts-studio-captioned.mp4" hidden>Download MP4 ↓</a>
         </div>
+        <div class="render-progress" id="renderProgress" hidden>
+          <div class="progress-copy"><span id="renderProgressLabel">Rendering…</span><span id="renderProgressPercent">0%</span></div>
+          <progress id="renderProgressBar" max="100" value="0">0%</progress>
+        </div>
+        <p class="render-status" id="renderStatus" role="status"></p>
       </section>
     </section>
     <footer class="page-footer">Everything is processed locally in your browser. Keep a copy of your original video.</footer>
