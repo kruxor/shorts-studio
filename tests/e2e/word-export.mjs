@@ -31,10 +31,11 @@ try {
   await page.waitForFunction(() => !document.querySelector('#workspace').hidden, null, { timeout: 180_000 });
 
   const groupWords = await page.evaluate(() => {
-    const groups = [...document.querySelectorAll('#captionList [data-group]')];
-    return groups.length;
+    // The caption list renders .caption-row items; there is no data-group attribute.
+    return document.querySelectorAll('#captionList .caption-row').length;
   });
   result.captionGroups = groupWords;
+  if (groupWords < 1) throw new Error('no caption rows rendered, so the export cannot be trusted');
 
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: 30_000 }),
