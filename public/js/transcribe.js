@@ -64,7 +64,11 @@ function createWorker() {
     event.preventDefault?.();
     const cause = event.error?.message || event.error?.stack || event.message || '';
     const location = event.filename ? ` at ${event.filename}:${event.lineno || 0}:${event.colno || 0}` : '';
-    failWorker(instance, `Whisper worker crashed${cause ? `: ${cause}${location}` : `${location || ' (no error details)'}`}`);
+    // A module worker that cannot fetch its imports reports an error event with
+    // no message at all, so say what is actually actionable in that case.
+    failWorker(instance, cause
+      ? `Whisper worker crashed: ${cause}${location}`
+      : `The transcription engine could not load${location}. Check your connection and reload the page.`);
   };
   instance.onmessageerror = () => {
     failWorker(instance, 'Whisper worker response could not be deserialized.');

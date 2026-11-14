@@ -6,9 +6,10 @@ import { DEFAULT_STYLE, FONTS, normalizeStyle, clampStyleValue } from './style.j
 import { validatePreset, serializePresets, parsePresets } from './presets.js';
 import { transcriptText, replaceTranscriptText } from './alignment.js';
 import { buildWordTimings, wordTimingsFileName } from './word-export.js';
+import { outputSizeFor } from './output-size.js';
 
-const OUTPUT_WIDTH = 1080;
-const OUTPUT_HEIGHT = 1920;
+let outputWidth = 1080;
+let outputHeight = 1920;
 const DB_NAME = 'shorts-studio-presets';
 const DB_VERSION = 1;
 const STORE_NAME = 'presets';
@@ -20,8 +21,8 @@ const elements = {
   modelSelect: $('#modelSelect'), startButton: $('#startButton'), stageItems: [...document.querySelectorAll('.stage-item')],
   workflowStatus: $('#workflowStatus'), taskProgress: $('#taskProgress'), progressLabel: $('#progressLabel'),
   progressPercent: $('#progressPercent'), progressBar: $('#progressBar'), errorNotice: $('#errorNotice'),
-  infoNotice: $('#infoNotice'), workspace: $('#workspace'), previewStage: $('#previewStage'),
-  previewCanvas: $('#previewCanvas'), previewEmpty: $('#previewEmpty'), sourceVideo: $('#sourceVideo'),
+  infoNotice: $('#infoNotice'), workspace: $('#workspace'), previewPanel: $('.preview-panel'), previewStage: $('#previewStage'),
+  previewCanvas: $('#previewCanvas'), previewResolution: $('.preview-resolution'), previewEmpty: $('#previewEmpty'), sourceVideo: $('#sourceVideo'),
   playButton: $('#playButton'), timeSlider: $('#timeSlider'), timeReadout: $('#timeReadout'),
   captionList: $('#captionList'), groupCount: $('#groupCount'), renderButton: $('#renderButton'),
   renderProgress: $('#renderProgress'), renderProgressLabel: $('#renderProgressLabel'),
@@ -104,7 +105,13 @@ function countChangedWords(before, after) {
   return changed + oldWords.length - oldIndex + newWords.length - newIndex;
 }
 function setWorkflowStatus(text) { elements.workflowStatus.textContent = text; }
-
+function setOutputSize(width, height) {
+  outputWidth = width;
+  outputHeight = height;
+  elements.previewPanel.style.setProperty('--preview-ratio', `${width} / ${height}`);
+  const orientation = width === height ? 'Square' : width > height ? 'Landscape' : 'Portrait';
+  elements.previewResolution.textContent = `${orientation} · ${width} × ${height}`;
+}
 function setStage(activeName) {
   const activeIndex = STAGES.indexOf(activeName);
   elements.stageItems.forEach((item, index) => {
@@ -204,15 +211,16 @@ function setSelectedFile(file) {
   if (fileUrl) URL.revokeObjectURL(fileUrl);
   fileUrl = URL.createObjectURL(file);
   selectedFile = file;
+  setOutputSize(1080, 1920);
   videoInfo = null;
   transcript = null;
   groups = [];
   syncParagraphEditor();
   elements.sourceVideo.pause();
+  elements.startButton.disabled = true;
   elements.sourceVideo.src = fileUrl;
   elements.sourceVideo.load();
   elements.fileSummary.innerHTML = `<span class="file-icon" aria-hidden="true">▱</span><span title="${escapeAttribute(file.name)}">${escapeHtml(file.name)} · ${formatBytes(file.size)}</span>`;
-  elements.startButton.disabled = false;
   elements.workspace.hidden = true;
   elements.taskProgress.hidden = true;
   renderPanelProgressActive = false;
@@ -220,7 +228,7 @@ function setSelectedFile(file) {
   elements.renderProgressBar.value = 0;
   setRenderStatus('');
   elements.stageItems.forEach(item => item.classList.remove('is-active', 'is-done'));
-  setWorkflowStatus('Ready to decode');
+  setWorkflowStatus('Loading video metadata');
   removeRenderDownload();
   elements.renderButton.disabled = true;
   elements.playButton.disabled = true;
@@ -247,7 +255,7 @@ function drawCaptionLayer(ctx, captionGroups, captionStyle, time, width, height)
   const group = activeGroup(captionGroups, time);
   if (!group?.length || !width || !height || loadedFontFamily !== captionStyle.font) return;
   const font = FONTS.find(item => item.family === captionStyle.font) ?? FONTS[0];
-  const scale = Math.max(0.1, width / OUTPUT_WIDTH);
+  const scale = Math.max(0.1, Math.min(width, height) / 1080);
   const fontSize = captionStyle.font_size * scale;
   const lineHeight = fontSize * 1.16;
   ctx.save();
@@ -257,7 +265,7 @@ function drawCaptionLayer(ctx, captionGroups, captionStyle, time, width, height)
   ctx.lineJoin = 'round';
   ctx.lineWidth = captionStyle.stroke_width * scale;
   ctx.strokeStyle = captionStyle.stroke_color;
-  const maxLineWidth = Math.max(1, Math.min(width * 0.9, width - captionStyle.stroke_width * scale * 2));
+  const maxLineWidth = Math.max(1, Math.min(width * 0.9, fontSize * 10, width - captionStyle.stroke_width * scale * 2));
   const spaceWidth = ctx.measureText(' ').width;
   const lines = [[]];
   let lineWidth = 0;
@@ -340,12 +348,12 @@ function drawPreview() {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  const divisor = Math.max(1, OUTPUT_WIDTH);
+  const divisor = Math.max(1, outputWidth);
   previewScale = Math.max(0.1, Math.min(2, (elements.previewStage.clientWidth || 0) / divisor));
-  canvas.width = Math.max(1, Math.round(OUTPUT_WIDTH * previewScale * dpr));
-  canvas.height = Math.max(1, Math.round(OUTPUT_HEIGHT * previewScale * dpr));
+  canvas.width = Math.max(1, Math.round(outputWidth * previewScale * dpr));
+  canvas.height = Math.max(1, Math.round(outputHeight * previewScale * dpr));
   ctx.setTransform(previewScale * dpr, 0, 0, previewScale * dpr, 0, 0);
-  drawCompleteFrame(ctx, elements.sourceVideo, elements.sourceVideo.currentTime || 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+  drawCompleteFrame(ctx, elements.sourceVideo, elements.sourceVideo.currentTime || 0, outputWidth, outputHeight);
 }
 function previewTick() {
   if (selectedFile && !elements.workspace.hidden) {
@@ -655,6 +663,27 @@ async function importPresetFile(file) {
   } catch (error) { showError(`Could not import presets: ${humanError(error, 'Check that the JSON file is valid.')}`); }
 }
 
+// The transcription worker is a module worker, so the browser fetches its script
+// and then each of its imports as subresources. Some edges — Cloudflare demonstrably
+// — answer those worker-initiated requests in a way the browser refuses to parse,
+// which surfaces to the page as a worker error event with no message at all
+// ("crashed (no error details)"). Fetching the same URLs from the page first
+// leaves them in the HTTP cache, and the worker then loads from cache instead of
+// making requests of its own. Measured on shorts.kruxor.com: without this the
+// worker dies every time behind the edge; with it, 21 caption rows every time.
+// Bytes are not duplicated — the worker would have fetched these anyway.
+const WORKER_ASSETS = [
+  './transcribe.worker.js',
+  './transcribe-shared.js',
+  '../vendor/transformers/transformers.web.js',
+  '../vendor/common/esm/index.js',
+  '../vendor/ort/ort.bundle.min.mjs',
+];
+
+function prewarmWorkerAssets() {
+  return Promise.all(WORKER_ASSETS.map(path => fetch(new URL(path, import.meta.url)).catch(() => null)));
+}
+
 async function startWorkflow() {
   if (!selectedFile || elements.startButton.disabled) return;
   const model = elements.modelSelect.value;
@@ -669,6 +698,9 @@ async function startWorkflow() {
   setStage('decode');
   setWorkflowStatus('Decoding media');
   setProgress('Inspecting MP4 video…', 0);
+  // Warm the worker's import graph while the video is decoded, so the worker
+  // spawns against a warm cache rather than making its own edge-fetched requests.
+  const workerAssets = prewarmWorkerAssets();
   try {
     videoInfo = await probeVideo(selectedFile);
     if (!videoInfo || !Number.isFinite(Number(videoInfo.duration)) || videoInfo.duration <= 0) {
@@ -685,6 +717,7 @@ async function startWorkflow() {
     setProgress(`Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`, 0);
     let result;
     try {
+      await workerAssets;
       result = await transcribeAudio(audio.samples, {
         model,
         onProgress: progress => setProgress(`Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`, progressPercent(progress)),
@@ -790,13 +823,13 @@ async function renderCurrentVideo() {
     // Overlay the exact caption layer used by the live preview without seeking a second video.
     const drawFrame = (ctx, time) => {
       if (cancelRequested) throw new DOMException('Render cancelled by the user.', 'AbortError');
-      drawCaptionLayer(ctx, groups, style, time, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+      drawCaptionLayer(ctx, groups, style, time, outputWidth, outputHeight);
     };
     const blob = await renderVideo({
       file: selectedFile,
       drawFrame,
-      width: OUTPUT_WIDTH,
-      height: OUTPUT_HEIGHT,
+      width: outputWidth,
+      height: outputHeight,
       fps: 30,
       onProgress: progress => {
         if (cancelRequested) throw new DOMException('Render cancelled by the user.', 'AbortError');
@@ -889,6 +922,20 @@ function installEvents() {
       elements.sourceVideo.pause();
       elements.playButton.innerHTML = '▶ <span>Play</span>';
     }
+  });
+  elements.sourceVideo.addEventListener('loadedmetadata', () => {
+    if (!selectedFile || elements.sourceVideo.currentSrc !== fileUrl) return;
+    const size = outputSizeFor(elements.sourceVideo.videoWidth, elements.sourceVideo.videoHeight);
+    setOutputSize(size.width, size.height);
+    elements.startButton.disabled = false;
+    setWorkflowStatus('Ready to decode');
+    drawPreview();
+  });
+  elements.sourceVideo.addEventListener('error', () => {
+    if (!selectedFile || elements.sourceVideo.currentSrc !== fileUrl) return;
+    elements.startButton.disabled = false;
+    setWorkflowStatus('Video metadata unavailable');
+    showError('Could not read the selected video metadata. Check that the MP4 contains a supported H.264 video stream.');
   });
   elements.sourceVideo.addEventListener('ended', () => { elements.playButton.innerHTML = '▶ <span>Play</span>'; });
   elements.timeSlider.addEventListener('input', () => {

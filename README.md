@@ -162,7 +162,9 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | Preview stays visible | pinned at 12px while the style controls scroll past; controls sit beside it, not below |
 | Drag to position | dragged to 22% height; exported MP4 has 100% of caption ink in the top third, 0% at the old 66% |
 | Model unload | worker terminated after a run; 154 MB held instead of 1511 MB, peak 2567 MB |
-| Main thread stays free | longest blocked block 128 ms with the worker vs 8592 ms without (7 long tasks vs 2) |
+| Main thread stays free | longest blocked block 90-128 ms with the worker vs 8592 ms without (7 long tasks vs 2) |
+| Landscape source | 1920x1080 in gives 1920x1080 out, H.264 + AAC, preview stage 613x345 (16:9) |
+| Portrait unchanged | 1080x1920 out, 30 fps, 24.000000 s, preview still 620/576/461 px at 1000/800/640 px viewports |
 | Word timing export | 53 words, schema v1, filename derived from the video, monotonic 2.00s to 23.96s |
 | 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
 | 24fps source | output duration 24.000s — duration and caption sync preserved |
@@ -183,17 +185,43 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 - Audio is AAC passthrough, never re-encoded. A non-AAC audio track is rejected
   by design (re-encoding audio in the browser is a separate project).
 
+## Output size
+
+Portrait sources render 1080x1920; a 16:9 source renders 1920x1080, and the
+preview flips to match instead of letterboxing the video inside a vertical box.
+`outputSizeFor()` in `public/js/output-size.js` picks an even H.264 frame size
+whose short side is `min(1080, source short side)`, so nothing is upscaled. The
+renderer never had an orientation assumption — it takes width and height as
+arguments and derives bitrate from `width * height * fps` — so this is one
+computed size pair plus a caption scale based on `Math.min(width, height)`.
+
 ## Known limits
 
 - **Memory after transcription.** Whisper runs in a dedicated worker, and
   `unloadModels()` terminates it so its WASM heap can be reclaimed. The browser
   process may take a short time to reflect the released memory in RSS.
+- **Landscape output is one frame short.** A 1920x1080 render of the 24 s fixture
+  produces 719 frames and a 24.0333 s container, where portrait produces 720 and
+  exactly 24.000000 s. Visually invisible, but it means the encoder dropped one
+  frame at the tail under heavier pixel throughput. Not yet diagnosed.
+
 - **Nothing prevents someone copying this.** The source ships by design, so a
   URL is not a moat. MIT (see `LICENSE`) buys goodwill, not protection.
 - **No accounts and no saved projects.** Presets live in IndexedDB on the user's
   own machine and export/import as JSON. That is deliberate: a server-side store
   is the one thing that would turn this into a hosted product with auth, billing
   and privacy obligations.
+
+## Worker assets and edge caching
+
+The transcription worker is a module worker, so the browser fetches its script
+and then each import as subresources. Cloudflare rejected those worker-initiated
+requests on shorts.kruxor.com: the page reported `Whisper worker crashed (no
+error details)` every time, while the same build served straight from the origin
+worked. Filling the HTTP cache from the page first (`prewarmWorkerAssets()` in
+`app.js`, run during decode) makes the worker load from cache and the failure
+disappears. If transcription ever fails with that message on a new host, test
+the origin directly before blaming the code.
 
 ## Tests
 
