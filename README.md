@@ -21,7 +21,9 @@ This version pushes both halves into the browser, which removes all three.
 audio.js       decodeAudioData -> downmix to mono -> resample 16 kHz
                 (decodeAudioData is NOT a resampler; this resamples explicitly)
 
-transcribe.js  @huggingface/transformers Whisper, weights served locally,
+transcribe.js  worker proxy: spawns, feeds audio, forwards progress, terminates
+transcribe.worker.js  @huggingface/transformers Whisper inside a Web Worker,
+                       weights served locally,
                 return_timestamps: 'word' -> words[{text,start,end}]
 
 captions.js    ported grouping rules: min/max words, max chars,
@@ -159,7 +161,8 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | Caption hold | a line stays up until the next line starts; no blank gaps |
 | Preview stays visible | pinned at 12px while the style controls scroll past; controls sit beside it, not below |
 | Drag to position | dragged to 22% height; exported MP4 has 100% of caption ink in the top third, 0% at the old 66% |
-| Model unload | pipeline cache cleared after a run (0 cached); next run rebuilds in 9.8s |
+| Model unload | worker terminated after a run; 154 MB held instead of 1511 MB, peak 2567 MB |
+| Main thread stays free | longest blocked block 128 ms with the worker vs 8592 ms without (7 long tasks vs 2) |
 | Word timing export | 53 words, schema v1, filename derived from the video, monotonic 2.00s to 23.96s |
 | 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
 | 24fps source | output duration 24.000s — duration and caption sync preserved |
@@ -182,15 +185,11 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 
 ## Known limits
 
-- **Memory is not fully returned after transcription.** `unloadModels()` disposes
-  the session and clears the pipeline cache (measured: 0 cached afterwards, and
-  the next run rebuilds from local files in 9.8s), but ONNX Runtime's WASM linear
-  heap keeps its pages — peak 2.58 GB, 2.49 GB after unload. Moving transcription
-  into a Web Worker and calling `terminate()` is the only way to hand that back.
-  Not built: the tab stays usable, it just holds the reservation until closed.
+- **Memory after transcription.** Whisper runs in a dedicated worker, and
+  `unloadModels()` terminates it so its WASM heap can be reclaimed. The browser
+  process may take a short time to reflect the released memory in RSS.
 - **Nothing prevents someone copying this.** The source ships by design, so a
-  URL is not a moat. There is no LICENSE file yet — worth adding before it is
-  public.
+  URL is not a moat. MIT (see `LICENSE`) buys goodwill, not protection.
 - **No accounts and no saved projects.** Presets live in IndexedDB on the user's
   own machine and export/import as JSON. That is deliberate: a server-side store
   is the one thing that would turn this into a hosted product with auth, billing

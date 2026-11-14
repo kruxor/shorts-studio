@@ -1,4 +1,4 @@
-import { pipeline, env } from '../vendor/transformers/transformers.web.js';
+import { normalizeWordChunks } from './transcribe-shared.js';
 
 export const MODELS = {
   // The public build ships base.en only: 77 MB of weights versus 242 MB for
@@ -7,83 +7,89 @@ export const MODELS = {
   'base.en': 'whisper-base.en',
 };
 
-// Transformers and ONNX Runtime must use only assets shipped with this static app.
-env.allowRemoteModels = false;
-env.allowLocalModels = true;
-env.localModelPath = './models/';
-if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.wasmPaths = new URL('../vendor/ort/', import.meta.url).href;
+let worker = null;
+let pendingRequest = null;
 
-const REQUIRED_MODEL_FILES = [
-  'config.json',
-  'tokenizer.json',
-  'preprocessor_config.json',
-  'onnx/encoder_model_quantized.onnx',
-  'onnx/decoder_model_merged_quantized.onnx',
-];
+function clearPending(instance) {
+  if (pendingRequest?.worker !== instance) return null;
+  const request = pendingRequest;
+  pendingRequest = null;
+  return request;
+}
 
-async function assertLocalModelFiles(modelDirectory) {
-  for (const relativePath of REQUIRED_MODEL_FILES) {
-    const modelUrl = new URL(`../models/${modelDirectory}/${relativePath}`, import.meta.url);
-    let response;
+function failWorker(instance, message) {
+  if (worker !== instance) return;
+  worker = null;
+  const request = clearPending(instance);
+  instance.onmessage = null;
+  instance.onerror = null;
+  instance.onmessageerror = null;
+  instance.terminate();
+  request?.reject(new Error(message));
+}
+
+function createWorker() {
+  if (worker) return worker;
+  const instance = new Worker(new URL('./transcribe.worker.js', import.meta.url), { type: 'module' });
+  worker = instance;
+
+  instance.onmessage = ({ data }) => {
+    if (worker !== instance || pendingRequest?.worker !== instance) return;
+    if (data?.type === 'progress') {
+      try { pendingRequest.onProgress?.(data.payload); } catch { /* progress observers must not break inference */ }
+      return;
+    }
+
+    const request = clearPending(instance);
+    if (!request) return;
+    if (data?.type === 'error') {
+      request.reject(new Error(data.message || 'Whisper worker reported an unknown error.'));
+      return;
+    }
+    if (data?.type !== 'result') {
+      request.reject(new Error('Whisper worker returned an invalid response.'));
+      return;
+    }
+
     try {
-      response = await fetch(modelUrl, { method: 'HEAD', cache: 'no-store' });
+      const result = data;
+      const words = normalizeWordChunks(result);
+      request.resolve({ words, text: String(result?.text ?? words.map((word) => word.text).join(' ')).trim() });
     } catch (error) {
-      throw new Error(`Unable to check local Whisper model file "models/${modelDirectory}/${relativePath}". Serve the app over HTTP and confirm that file exists. ${error?.message || ''}`.trim());
+      request.reject(error);
     }
-    if (!response.ok) {
-      throw new Error(`Required local Whisper model file is missing: models/${modelDirectory}/${relativePath} (HTTP ${response.status}).`);
-    }
-  }
+  };
+
+  instance.onerror = (event) => {
+    event.preventDefault?.();
+    const cause = event.error?.message || event.error?.stack || event.message || '';
+    const location = event.filename ? ` at ${event.filename}:${event.lineno || 0}:${event.colno || 0}` : '';
+    failWorker(instance, `Whisper worker crashed${cause ? `: ${cause}${location}` : `${location || ' (no error details)'}`}`);
+  };
+  instance.onmessageerror = () => {
+    failWorker(instance, 'Whisper worker response could not be deserialized.');
+  };
+  return instance;
 }
 
-function normalizeWordChunks(result) {
-  const candidates = Array.isArray(result?.words)
-    ? result.words
-    : (Array.isArray(result?.chunks) ? result.chunks : null);
-  if (!candidates?.length) {
-    throw new Error('Whisper did not return word-level timestamps (no words[] or timestamped chunks were returned).');
-  }
-
-  const words = candidates.map((item) => {
-    const text = String(item?.text ?? '').trim();
-    const start = Number(item?.start ?? item?.timestamp?.[0]);
-    const end = Number(item?.end ?? item?.timestamp?.[1]);
-    if (!text || !Number.isFinite(start) || !Number.isFinite(end) || end < start) {
-      throw new Error('Whisper returned incomplete word timestamps; expected one word with a finite start and end time per item.');
-    }
-    if (text.split(/\s+/u).length > 1) {
-      throw new Error('Whisper returned chunk-level timestamps instead of word-level timestamps. Confirm the local model supports return_timestamps: "word".');
-    }
-    return { text, start, end };
-  });
-
-  if (!Array.isArray(words) || words.length === 0) {
-    throw new Error('Whisper did not return a non-empty words[] array.');
-  }
-  return words;
-}
-
-// The pipeline keeps its ONNX sessions and ~320MB of weights, plus the runtime's
-// working buffers, alive for as long as it is cached. Once a transcription is
-// done nothing needs the model again until the next run, so release it instead
-// of leaving the tab holding gigabytes. Nothing is re-downloaded on reload: the
-// weights are local files, so rebuilding costs a second or two.
 export async function unloadModels() {
-  const recognizers = transcribeAudio._recognizers;
-  if (!recognizers?.size) return 0;
-  let released = 0;
-  for (const recognizer of recognizers.values()) {
-    try {
-      if (typeof recognizer?.dispose === 'function') await recognizer.dispose();
-      else if (typeof recognizer?.model?.dispose === 'function') await recognizer.model.dispose();
-      released += 1;
-    } catch { /* a session that is already closed is not an error here */ }
-  }
-  recognizers.clear();
-  return released;
+  const instance = worker;
+  if (!instance) return 0;
+
+  worker = null;
+  const request = clearPending(instance);
+  instance.onmessage = null;
+  instance.onerror = null;
+  instance.onmessageerror = null;
+  instance.terminate();
+  request?.reject(new Error('Whisper worker was terminated while transcription was in progress.'));
+  return 1;
 }
 
 export async function transcribeAudio(samples, { model = 'base.en', onProgress } = {}) {
+  if (pendingRequest) {
+    throw new Error('A Whisper transcription is already in progress. Wait for it to finish before starting another.');
+  }
   if (!(samples instanceof Float32Array) || samples.length === 0) {
     throw new TypeError('Whisper input must be a non-empty Float32Array of 16 kHz mono samples.');
   }
@@ -91,32 +97,19 @@ export async function transcribeAudio(samples, { model = 'base.en', onProgress }
     throw new Error(`Unknown Whisper model "${model}". Choose "base.en".`);
   }
 
-  const modelDirectory = MODELS[model];
-  onProgress?.({ stage: 'model-check', progress: 0 });
-  await assertLocalModelFiles(modelDirectory);
-  onProgress?.({ stage: 'model-check', progress: 1 });
+  const instance = createWorker();
+  const isTransferableBuffer = samples.buffer instanceof ArrayBuffer;
+  const sampleBuffer = isTransferableBuffer && samples.byteOffset === 0 && samples.byteLength === samples.buffer.byteLength
+    ? samples.buffer
+    : samples.slice().buffer;
 
-  let recognizer = transcribeAudio._recognizers?.get(model);
-  if (!recognizer) {
-    onProgress?.({ stage: 'model-load', progress: 0 });
-    const onModelProgress = (event) => onProgress?.({ stage: 'model-load', ...event });
-    recognizer = await pipeline('automatic-speech-recognition', modelDirectory, {
-      dtype: 'q8',
-      progress_callback: onModelProgress,
-    });
-    if (!transcribeAudio._recognizers) transcribeAudio._recognizers = new Map();
-    transcribeAudio._recognizers.set(model, recognizer);
-    onProgress?.({ stage: 'model-load', progress: 1 });
-  }
-
-  onProgress?.({ stage: 'transcription', progress: 0 });
-  const result = await recognizer(samples, {
-    return_timestamps: 'word',
-    chunk_length_s: 30,
-    stride_length_s: 5,
-    progress_callback: (event) => onProgress?.({ stage: 'transcription', ...event }),
+  return new Promise((resolve, reject) => {
+    pendingRequest = { worker: instance, onProgress, resolve, reject };
+    try {
+      instance.postMessage({ type: 'transcribe', model, samples: sampleBuffer }, [sampleBuffer]);
+    } catch (error) {
+      clearPending(instance);
+      reject(new Error(`Could not send audio to the Whisper worker: ${error?.message || String(error)}`));
+    }
   });
-  const words = normalizeWordChunks(result);
-  onProgress?.({ stage: 'transcription', progress: 1 });
-  return { words, text: String(result?.text ?? words.map((word) => word.text).join(' ')).trim() };
 }

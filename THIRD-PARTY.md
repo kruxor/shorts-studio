@@ -19,3 +19,13 @@ offline and never calls a CDN at runtime. Those files keep their own licences.
 The font licence texts ship next to the fonts, which is what OFL 1.1 requires
 when you redistribute the files. Whisper weights are not in git — fetch them
 with `scripts/fetch-models.sh`, which pulls the unmodified Xenova ONNX export.
+
+## Local modifications to vendored files
+
+`public/vendor/transformers/transformers.web.js` ships with two bare imports
+(`onnxruntime-common`, `onnxruntime-web`) that `index.html` resolves through an
+import map. Import maps do not apply inside Web Workers, where Whisper now runs,
+so the first two lines point at the relative paths instead
+(`../common/esm/index.js`, `../ort/ort.bundle.min.mjs`). Re-vendoring
+transformers.js **must reapply that two-line change**, or transcription fails to
+load in the worker while the rest of the app still looks fine.

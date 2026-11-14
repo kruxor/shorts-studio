@@ -1,5 +1,5 @@
-import * as __WEBPACK_EXTERNAL_MODULE_onnxruntime_common_82b39e9f__ from "onnxruntime-common";
-import * as __WEBPACK_EXTERNAL_MODULE_onnxruntime_web_74d14b94__ from "onnxruntime-web";
+import * as __WEBPACK_EXTERNAL_MODULE_onnxruntime_common_82b39e9f__ from "../common/esm/index.js";
+import * as __WEBPACK_EXTERNAL_MODULE_onnxruntime_web_74d14b94__ from "../ort/ort.bundle.min.mjs";
 /******/ var __webpack_modules__ = ({
 
 /***/ "onnxruntime-common":
