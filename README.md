@@ -201,9 +201,20 @@ computed size pair plus a caption scale based on `Math.min(width, height)`.
   `unloadModels()` terminates it so its WASM heap can be reclaimed. The browser
   process may take a short time to reflect the released memory in RSS.
 - **Landscape output is one frame short.** A 1920x1080 render of the 24 s fixture
-  produces 719 frames and a 24.0333 s container, where portrait produces 720 and
-  exactly 24.000000 s. Visually invisible, but it means the encoder dropped one
-  frame at the tail under heavier pixel throughput. Not yet diagnosed.
+  deterministically produces 719 video frames with the video track ending at
+  24.033333 s, where portrait produces 720 frames ending at exactly 24.000000 s.
+  Reproduced twice; not a race, and not yet diagnosed. One dropped frame at the
+  tail with the last sample stretched to fill, so there is no visible gap and no
+  audio drift. Suspect the streaming pipeline's backpressure when the frame is
+  78% more pixels than portrait, but that is a guess, not a measurement.
+
+- **Container duration is not the video duration, and AAC is why.** Every render
+  carries a 24.023220 s audio track whether the source is 24.000000 s or not:
+  1035 AAC frames of 1024 samples at 44.1 kHz cannot land on 24.000000 exactly,
+  and the audio is passed through rather than re-encoded. So `ffprobe`'s format
+  duration reads 24.023220 on portrait renders that are frame-exact. Compare the
+  video stream (`nb_frames`, stream duration) when checking timing, or you will
+  report a regression that does not exist.
 
 - **Nothing prevents someone copying this.** The source ships by design, so a
   URL is not a moat. MIT (see `LICENSE`) buys goodwill, not protection.
