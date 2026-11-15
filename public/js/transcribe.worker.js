@@ -10,6 +10,7 @@ if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.wasmPaths = new URL('../ven
 
 const MODELS = {
   'base.en': 'whisper-base.en',
+  'small.en': 'whisper-small.en',
 };
 const REQUIRED_MODEL_FILES = [
   'config.json',
@@ -45,7 +46,7 @@ self.addEventListener('message', async ({ data }) => {
   try {
     const { model, samples: sampleBuffer } = data;
     if (!Object.hasOwn(MODELS, model)) {
-      throw new Error(`Unknown Whisper model "${model}". Choose "base.en".`);
+      throw new Error(`Unknown Whisper model "${model}". Choose "base.en" or "small.en".`);
     }
     if (!(sampleBuffer instanceof ArrayBuffer) || sampleBuffer.byteLength === 0 || sampleBuffer.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
       throw new TypeError('Whisper input must be a non-empty Float32Array of 16 kHz mono samples.');

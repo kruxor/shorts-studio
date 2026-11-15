@@ -13,12 +13,13 @@ let outputHeight = 1920;
 const DB_NAME = 'shorts-studio-presets';
 const DB_VERSION = 1;
 const STORE_NAME = 'presets';
+const SMALL_MODEL_UNLOCK_KEY = 'shorts-studio:unlock-small';
 const STAGES = ['decode', 'transcribe', 'review', 'render'];
 const $ = selector => document.querySelector(selector);
 
 const elements = {
   fileInput: $('#fileInput'), dropZone: $('#dropZone'), fileSummary: $('#fileSummary'),
-  modelSelect: $('#modelSelect'), startButton: $('#startButton'), stageItems: [...document.querySelectorAll('.stage-item')],
+  modelSelect: $('#modelSelect'), modelUnlock: $('#modelUnlock'), startButton: $('#startButton'), stageItems: [...document.querySelectorAll('.stage-item')],
   workflowStatus: $('#workflowStatus'), taskProgress: $('#taskProgress'), progressLabel: $('#progressLabel'),
   progressPercent: $('#progressPercent'), progressBar: $('#progressBar'), errorNotice: $('#errorNotice'),
   infoNotice: $('#infoNotice'), workspace: $('#workspace'), previewPanel: $('.preview-panel'), previewStage: $('#previewStage'),
@@ -77,6 +78,19 @@ function showInfo(message) {
 }
 function humanError(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+function syncSmallModelOption(unlocked = localStorage.getItem(SMALL_MODEL_UNLOCK_KEY) === '1') {
+  const option = elements.modelSelect.querySelector('option[value="small.en"]');
+  if (unlocked && !option) {
+    const smallOption = document.createElement('option');
+    smallOption.value = 'small.en';
+    smallOption.textContent = 'Small English · more accurate (242 MB, first use)';
+    elements.modelSelect.append(smallOption);
+  } else if (!unlocked && option) {
+    option.remove();
+  }
+  if (!unlocked) elements.modelSelect.value = 'base.en';
+  elements.modelUnlock.setAttribute('aria-pressed', String(unlocked));
 }
 function paragraphEditorIsDirty() {
   return Boolean(transcript?.words?.length && elements.transcriptEditor.value !== transcriptText(transcript));
@@ -688,7 +702,7 @@ async function startWorkflow() {
   if (!selectedFile || elements.startButton.disabled) return;
   const model = elements.modelSelect.value;
   if (!Object.hasOwn(MODELS, model)) {
-    showError('Choose a supported transcription model: base.en.');
+    showError('Choose a supported transcription model: base.en or small.en.');
     return;
   }
   clearNotices();
@@ -900,6 +914,12 @@ function endPreviewDrag(event) {
 }
 
 function installEvents() {
+  elements.modelUnlock.addEventListener('click', () => {
+    const unlocked = localStorage.getItem(SMALL_MODEL_UNLOCK_KEY) === '1';
+    if (unlocked) localStorage.removeItem(SMALL_MODEL_UNLOCK_KEY);
+    else localStorage.setItem(SMALL_MODEL_UNLOCK_KEY, '1');
+    syncSmallModelOption(!unlocked);
+  });
   elements.fileInput.addEventListener('change', event => setSelectedFile(event.target.files?.[0]));
   elements.dropZone.addEventListener('keydown', event => {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); elements.fileInput.click(); }
@@ -974,6 +994,7 @@ function installEvents() {
   });
 }
 
+syncSmallModelOption();
 installEvents();
 refreshPresetList();
 const fontReady = document.fonts?.load?.('800 108px "Montserrat ExtraBold"');

@@ -70,19 +70,52 @@ python3 -m http.server 8099 -d public
 Whisper weights are gitignored and reproducible:
 
 ```bash
-./scripts/fetch-models.sh              # base.en only, 77 MB
+./scripts/fetch-models.sh                # base.en only, 77 MB
 FETCH_SMALL=1 ./scripts/fetch-models.sh  # also small.en, +242 MB
 ```
 
-The served build ships **base.en only**. The weights load lazily, per selected
-model, and only when Transcribe is pressed — so a second option costs server
-disk, not visitor bandwidth, for anyone who leaves base.en selected. It was
-dropped for simplicity and for speed on 4-core hardware (roughly 3x faster than
-small.en), not to save every visitor 242 MB.
+The served default remains **Base English (`base.en`)**. The picker has exactly
+one option on a fresh browser profile. To reveal the optional Small English
+model, click the tiny `·` at the end of the footer note; the setting persists in
+that browser's `localStorage`, and clicking the dot again locks it and restores
+Base English.
 
-Bringing it back means `FETCH_SMALL=1 ./scripts/fetch-models.sh`, one entry in
-`MODELS` in `public/js/transcribe.js`, and one `<option>` in `index.html` — both
-halves, or the picker offers a model that 404s.
+This is obscurity, not security: anyone can open devtools or edit localStorage.
+The point is simply to keep ordinary visitors from downloading 242 MB by
+accident. The unlock and page load do not fetch model weights. Small English's
+242 MB of weights consume that much additional server disk once fetched, and
+are requested only after the user selects it and presses Decode & transcribe
+for the first time. Fetch the weights with:
+
+```bash
+FETCH_SMALL=1 ./scripts/fetch-models.sh
+```
+
+Without those files, selecting small.en reports the missing local model files.
+Base English continues to be the default and never requires the small model's
+weights.
+
+The worker prewarm list contains only scripts; it does not prefetch model
+weights. Models are loaded lazily per selected model when transcription starts.
+
+### Which model, measured
+
+Same 24 s fixture, same machine, through the app (not a benchmark runner):
+
+| | base.en | small.en |
+|---|---|---|
+| local transcription | 12.3 s | 30.4 s (2.5x) |
+| live, first run incl. weights | 25.4 s | 66.3 s |
+| words transcribed | 53 | 52 |
+| words differing | — | 24 of 53 |
+
+On this fixture small.en is **not** more accurate. It hears the local brand as
+"Crocs or labs" where base.en gets "Cruxor Labs" right, three times in a row;
+it does join "on back ends" into "on backends" and drops a spurious comma after
+"Today". The fixture is synthesised speech, which is not what the models are
+tuned for, so treat this as one data point rather than a verdict — the only test
+that matters is the owner's own footage. What is certain from the numbers: 2.5x
+the time for the same transcript, on 4 cores with no GPU.
 
 The script fetches from the `Xenova/*` repos specifically, and fails loudly if
 the decoder has no cross-attention outputs. This matters: the `openai/whisper-*`
@@ -166,6 +199,8 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | Landscape source | 1920x1080 in gives 1920x1080 out, H.264 + AAC, preview stage 613x345 (16:9) |
 | Portrait unchanged | 1080x1920 out, 30 fps, 24.000000 s, preview still 620/576/461 px at 1000/800/640 px viewports |
 | Word timing export | 53 words, schema v1, filename derived from the video, monotonic 2.00s to 23.96s |
+| Small model stays locked | fresh profile has 1 option; unlock persists across reload; zero weight requests until transcribe |
+| Both models work live | base.en 25.4s and small.en 66.3s on the live host, first load including weights, 0 console errors |
 | 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
 | 24fps source | output duration 24.000s — duration and caption sync preserved |
 | Render progress | label advances with frames done/total, fps and ETA |

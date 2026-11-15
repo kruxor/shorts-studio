@@ -197,6 +197,8 @@ progress::-moz-progress-bar { border-radius: 99px; background: var(--accent); }
 .render-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .download-link { color: #c5f3df; border-color: #376c54; background: #20372c; }
 .page-footer { padding: 25px 0 35px; color: var(--faint); text-align: center; font-size: 10px; }
+.model-unlock { border: 0; padding: 2px 4px; color: inherit; background: transparent; opacity: .25; font-size: 12px; line-height: 1; vertical-align: middle; cursor: pointer; transition: opacity .15s; }
+.model-unlock:hover, .model-unlock:focus-visible { opacity: .9; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
 @media (min-width: 681px) {
