@@ -49,22 +49,12 @@ async function main() {
   page.on('pageerror', error => result.pageErrors.push({ name: error.name, message: error.message, stack: error.stack }));
   page.on('requestfailed', request => result.requestFailures.push({ url: request.url(), error: request.failure()?.errorText || 'unknown request failure' }));
 
-  // Observe Whisper's validated one-word results without changing the model or inference flow.
-  let instrumentationApplied = false;
-  await page.route('**/js/transcribe.js', async route => {
-    const response = await route.fetch();
-    const source = await response.text();
-    const marker = '  const words = normalizeWordChunks(result);';
-    if (!source.includes(marker)) {
-      result.instrumentationError = 'Could not find the expected normalization point in public/js/transcribe.js.';
-      await route.fulfill({ response, body: source });
-      return;
-    }
-    instrumentationApplied = true;
-    const instrumented = source.replace(marker, `${marker}\n  globalThis.__e2eTranscriptWords = words.map(word => ({ ...word }));`);
-    await route.fulfill({ response, body: instrumented });
-  });
-
+  // No page.route() here. Enabling request interception makes Playwright bypass
+  // Chromium's HTTP cache for the whole context, which defeats the worker asset
+  // prewarm the app relies on against the CDN edge: the harness would then fail
+  // with 'the transcription engine could not load' on a build that works in a
+  // real browser. Word-level assertions live in word-export.mjs, which reads the
+  // exported JSON instead of patching app code on the wire.
   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.locator('#page-title').waitFor({ state: 'visible' });
   await page.screenshot({ path: result.screenshots.initial, fullPage: true });
@@ -103,19 +93,7 @@ async function main() {
   const visibleError = await page.locator('#errorNotice').isVisible()
     ? (await page.locator('#errorNotice').innerText()).trim()
     : null;
-  const transcriptWords = await page.evaluate(() => globalThis.__e2eTranscriptWords || null);
-  result.transcription = {
-    status: workflowStatus,
-    instrumentationApplied,
-    instrumentationError: result.instrumentationError || null,
-    wordCount: transcriptWords?.length ?? 0,
-    wordLevelTimestamps: Boolean(transcriptWords?.length) && transcriptWords.every(word =>
-      typeof word.text === 'string' && word.text.trim().length > 0 &&
-      Number.isFinite(word.start) && Number.isFinite(word.end) && word.end > word.start &&
-      !/\s/u.test(word.text.trim())),
-    firstWords: transcriptWords?.slice(0, 12) ?? [],
-    error: visibleError,
-  };
+  result.transcription = { status: workflowStatus, wordCount: null, error: visibleError };
 
   if (workflowStatus === 'Review your captions') {
     await page.locator('#workspace').waitFor({ state: 'visible' });
@@ -131,12 +109,14 @@ async function main() {
       groups: rows,
     };
 
-    const firstTimedWord = transcriptWords?.find(word => Number.isFinite(word.start));
-    if (firstTimedWord) {
+    result.transcription.wordCount = result.editor.wordsInCaptionUi;
+    // Seek into the first caption group so the preview has something to draw.
+    const firstGroupStart = Number((rows[0]?.timing.match(/([\d.]+)s/) || [])[1]);
+    if (Number.isFinite(firstGroupStart)) {
       await page.locator('#timeSlider').evaluate((slider, time) => {
         slider.value = String(Math.max(0, Math.min(Number(slider.max), time + 0.05)));
         slider.dispatchEvent(new Event('input', { bubbles: true }));
-      }, firstTimedWord.start);
+      }, firstGroupStart);
       await page.waitForTimeout(300);
     }
     result.editor.previewCanvas = await page.locator('#previewCanvas').evaluate(canvas => {
@@ -193,9 +173,11 @@ async function main() {
   }
 
   result.consoleErrorCount = result.console.filter(message => message.type === 'error').length;
+  // Word-level timestamp assertions live in word-export.mjs, which reads the
+  // exported JSON; this harness checks that transcription produced captions.
   result.status = result.transcription?.status !== 'Review your captions'
     ? 'FAIL'
-    : result.transcription.wordLevelTimestamps !== true || result.editor?.captionGroupCount < 1
+    : !(result.transcription.wordCount > 0) || result.editor?.captionGroupCount < 1
       ? 'FAIL'
       : result.render.validMp4
         ? 'PASS'

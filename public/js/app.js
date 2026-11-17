@@ -695,8 +695,32 @@ const WORKER_ASSETS = [
   '../vendor/ort/ort.bundle.min.mjs',
 ];
 
-function prewarmWorkerAssets() {
-  return Promise.all(WORKER_ASSETS.map(path => fetch(new URL(path, import.meta.url)).catch(() => null)));
+// A fetch that resolves is not a fetch that worked. An edge can answer a cold
+// subresource request with a challenge page (HTTP 403, `text/html`), and caching
+// that response poisons the cache the worker is about to read from: the worker
+// then loads HTML as a module and exits with an error event that carries no
+// message at all. So each asset is checked for a successful status and a
+// JavaScript content type, retried with `cache: 'reload'` to bypass whatever bad
+// entry was just stored, and reported by URL if it still fails.
+async function prewarmWorkerAsset(path) {
+  const url = new URL(path, import.meta.url);
+  let detail = '';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url, attempt === 0 ? {} : { cache: 'reload' });
+      const contentType = response.headers.get('content-type') || '';
+      if (response.ok && /javascript|ecmascript/i.test(contentType)) return;
+      detail = `HTTP ${response.status} ${contentType || 'no content type'}`;
+    } catch (error) {
+      detail = humanError(error, 'network error');
+    }
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  throw new Error(`Could not load the transcription engine: ${url.pathname} returned ${detail}. Reload the page and try again.`);
+}
+
+async function prewarmWorkerAssets() {
+  await Promise.all(WORKER_ASSETS.map(prewarmWorkerAsset));
 }
 
 async function startWorkflow() {

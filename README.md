@@ -152,6 +152,18 @@ Caching matters more than bandwidth here (see `deploy/nginx-shorts-studio.conf`)
 | `/assets/*.{ttf,woff2,...}` | `max-age=31536000, immutable` | fonts never change |
 | `*.html`, `*.js`, `*.css` | `no-cache` | small, and updates must land immediately |
 
+The worker's import graph is prewarmed from the page before it spawns, because the
+edge in front of this deployment refuses the worker's own cold subresource
+requests (see the Cloudflare pitfall in `client-side-browser-media-processing`).
+That prewarm now validates every response — status, and a JavaScript content type
+— and retries with `cache: 'reload'`, because a cached challenge page makes the
+worker exit with an empty error. It matters that the page remains the one making
+those requests: **if you ever enable Playwright's `page.route()` in an E2E run,
+the whole browser context loses its HTTP cache**, which defeats the prewarm and
+produces a false failure on a build that works in a real browser. That is why
+`shorts-studio.mjs` reads the rendered captions instead of patching a module on
+the wire.
+
 `immutable` means browsers stop revalidating, so **if you replace a model or
 runtime file, bump its directory name** (`whisper-base.en-v2`, `ort-v2`).
 
