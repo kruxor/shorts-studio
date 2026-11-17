@@ -7,6 +7,7 @@ import { validatePreset, serializePresets, parsePresets } from './presets.js';
 import { transcriptText, replaceTranscriptText } from './alignment.js';
 import { buildWordTimings, wordTimingsFileName } from './word-export.js';
 import { outputSizeFor } from './output-size.js';
+import { formatVideoProcessingError } from './transcribe-shared.js';
 
 let outputWidth = 1080;
 let outputHeight = 1920;
@@ -84,7 +85,7 @@ function syncSmallModelOption(unlocked = localStorage.getItem(SMALL_MODEL_UNLOCK
   if (unlocked && !option) {
     const smallOption = document.createElement('option');
     smallOption.value = 'small.en';
-    smallOption.textContent = 'Small English · more accurate (242 MB, first use)';
+    smallOption.textContent = 'Small English · more accurate (242 MB, downloads once)';
     elements.modelSelect.append(smallOption);
   } else if (!unlocked && option) {
     option.remove();
@@ -715,14 +716,28 @@ async function startWorkflow() {
   // Warm the worker's import graph while the video is decoded, so the worker
   // spawns against a warm cache rather than making its own edge-fetched requests.
   const workerAssets = prewarmWorkerAssets();
+  let decodeFailure = false;
   try {
-    videoInfo = await probeVideo(selectedFile);
+    try {
+      videoInfo = await probeVideo(selectedFile);
+    } catch (error) {
+      decodeFailure = true;
+      throw error;
+    }
     if (!videoInfo || !Number.isFinite(Number(videoInfo.duration)) || videoInfo.duration <= 0) {
+      decodeFailure = true;
       throw new Error('The video has no readable duration. Choose a valid MP4/H.264 file.');
     }
     setProgress('Decoding audio locally…', 3);
-    const audio = await extractAudio(selectedFile, { onProgress: progress => setProgress('Decoding audio locally…', progressPercent(progress)) });
+    let audio;
+    try {
+      audio = await extractAudio(selectedFile, { onProgress: progress => setProgress('Decoding audio locally…', progressPercent(progress)) });
+    } catch (error) {
+      decodeFailure = true;
+      throw error;
+    }
     if (!(audio?.samples instanceof Float32Array) || !audio.samples.length) {
+      decodeFailure = true;
       throw new Error('Audio decoding did not produce 16 kHz mono samples. The file may not contain a supported audio track.');
     }
     completeStage('decode');
@@ -765,7 +780,7 @@ async function startWorkflow() {
   } catch (error) {
     elements.startButton.disabled = false;
     setWorkflowStatus('Could not process this video');
-    showError(`Could not decode or transcribe this video. Confirm it is an MP4 with H.264 video and a supported audio track. ${humanError(error, 'Try a different file or browser.')}`);
+    showError(formatVideoProcessingError(error, decodeFailure));
   }
 }
 

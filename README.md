@@ -104,10 +104,20 @@ Same 24 s fixture, same machine, through the app (not a benchmark runner):
 
 | | base.en | small.en |
 |---|---|---|
-| local transcription | 12.3 s | 30.4 s (2.5x) |
+| local transcription, 24 s clip | 12.3 s | 30.4 s (2.5x) |
+| local transcription, 72 s clip | 35.1 s | 132.3 s (3.8x) |
 | live, first run incl. weights | 25.4 s | 66.3 s |
+| live, repeat run from browser cache | 10.9 s | 29.2 s |
+| model bytes on a repeat visit | 0 MB | 0 MB |
 | words transcribed | 53 | 52 |
 | words differing | — | 24 of 53 |
+
+The slowdown grows with clip length because small.en has twelve encoder layers
+against base.en's six. It is inference time, not download: a repeat visit in the
+same browser profile transfers **zero** model bytes (`tests/e2e/model-cache.mjs`
+counts GET responses under `/models/`). The parenthetical on the option says
+"downloads once" for exactly this reason — the earlier "first use" wording made
+people reasonably conclude the weights were being fetched again every time.
 
 On this fixture small.en is **not** more accurate. It hears the local brand as
 "Crocs or labs" where base.en gets "Cruxor Labs" right, three times in a row;
@@ -231,6 +241,13 @@ arguments and derives bitrate from `width * height * fps` — so this is one
 computed size pair plus a caption scale based on `Math.min(width, height)`.
 
 ## Known limits
+
+- **A timestamped chunk can cover more than one word.** Whisper splits long audio
+  into 30 s windows with a 5 s stride, and a word that straddles the join can come
+  back grouped with its neighbour. Those chunks are split into one word each,
+  distributing the interval in proportion to word length. The timings are then
+  approximate within that window — better than discarding an entire transcript,
+  which is what the code used to do when it threw on the first such chunk.
 
 - **Memory after transcription.** Whisper runs in a dedicated worker, and
   `unloadModels()` terminates it so its WASM heap can be reclaimed. The browser
