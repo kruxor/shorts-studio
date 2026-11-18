@@ -111,6 +111,8 @@ select, .preset-save-row input { min-width: 0; padding: 9px 11px; border: 1px so
 .stage-item.is-done .stage-label { color: #c0f1dc; }
 .task-progress { margin-top: 17px; }
 .progress-copy { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
+.transcription-expectation { margin: 0 0 9px; color: var(--faint); font-size: 10px; }
+.transcription-cancel { margin-top: 10px; }
 progress { display: block; width: 100%; height: 7px; overflow: hidden; border: 0; border-radius: 99px; background: #2a2c33; accent-color: var(--accent); }
 progress::-webkit-progress-bar { border-radius: 99px; background: #2a2c33; }
 progress::-webkit-progress-value { border-radius: 99px; background: var(--accent); }

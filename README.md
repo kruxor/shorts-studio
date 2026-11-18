@@ -223,6 +223,8 @@ Measured on a 4-core CPU box, headless Chromium 1254, 24-second 1080x1920
 | Word timing export | 53 words, schema v1, filename derived from the video, monotonic 2.00s to 23.96s |
 | Small model stays locked | fresh profile has 1 option; unlock persists across reload; zero weight requests until transcribe |
 | Both models work live | base.en 25.4s and small.en 66.3s on the live host, first load including weights, 0 console errors |
+| Long clip stays alive | 312s clip: elapsed label ticks every second, cancel visible, "long clips can take minutes" line shown |
+| Cancel then retry | cancel mid-run leaves "Transcription cancelled", no error notice, start re-enabled; a second run in the same page reaches 21 caption groups |
 | 4K render (2160x3840, 720 frames, 24s) | 28.5s wall clock, 26 fps throughput, peak browser RSS 2.88 GB and flat |
 | 24fps source | output duration 24.000s — duration and caption sync preserved |
 | Render progress | label advances with frames done/total, fps and ETA |
@@ -251,6 +253,20 @@ whose short side is `min(1080, source short side)`, so nothing is upscaled. The
 renderer never had an orientation assumption — it takes width and height as
 arguments and derives bitrate from `width * height * fps` — so this is one
 computed size pair plus a caption scale based on `Math.min(width, height)`.
+
+## Long clips
+
+Inference gives no progress to report, so a long clip spends minutes at 0%. The
+percentage is the model's, not a clock you can trust: a 5.2-minute clip through
+small.en took **557 s** on this box (1.8x real time) and the bar only moved four
+times in all that time. So the UI shows elapsed time ticking every second, a line
+explaining that long clips take minutes and the tab must stay open, and a Cancel
+button that terminates the worker — terminating frees the ~2.5 GB it holds. After a
+cancel you can start again in the same page; `tests/e2e/cancel-restart.mjs` proves
+it by cancelling mid-run and transcribing a second clip.
+
+If you caption long footage, use base.en: it runs at 0.5x real time against
+small.en's 1.8x, so a 20-minute clip is ~10 minutes instead of ~36.
 
 ## Known limits
 

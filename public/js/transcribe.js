@@ -74,6 +74,27 @@ function createWorker() {
   return instance;
 }
 
+export function cancel() {
+  const instance = worker;
+  if (!instance) return false;
+
+  // Dropping the worker destroys its worker-owned recognizers map and runtime
+  // buffers. Clear both shared references before rejecting so a new call can
+  // synchronously create a fresh worker instead of seeing a stale in-flight guard.
+  worker = null;
+  const request = clearPending(instance);
+  instance.onmessage = null;
+  instance.onerror = null;
+  instance.onmessageerror = null;
+  instance.terminate();
+  if (request) {
+    const error = new Error('Transcription cancelled.');
+    error.cancelled = true;
+    request.reject(error);
+  }
+  return Boolean(request);
+}
+
 export async function unloadModels() {
   const instance = worker;
   if (!instance) return 0;

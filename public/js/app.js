@@ -1,5 +1,6 @@
 import { extractAudio } from './audio.js';
-import { transcribeAudio, unloadModels, MODELS } from './transcribe.js';
+import { transcribeAudio, cancel as cancelTranscription, unloadModels, MODELS } from './transcribe.js';
+import { formatElapsedTime, isLongClip } from './transcribe-progress.js';
 import { probeVideo, renderVideo } from './render.js';
 import { groupWords, activeGroup, spokenWordIndex, flattenGroups } from './captions.js';
 import { DEFAULT_STYLE, FONTS, normalizeStyle, clampStyleValue } from './style.js';
@@ -23,6 +24,7 @@ const elements = {
   modelSelect: $('#modelSelect'), modelUnlock: $('#modelUnlock'), startButton: $('#startButton'), stageItems: [...document.querySelectorAll('.stage-item')],
   workflowStatus: $('#workflowStatus'), taskProgress: $('#taskProgress'), progressLabel: $('#progressLabel'),
   progressPercent: $('#progressPercent'), progressBar: $('#progressBar'), errorNotice: $('#errorNotice'),
+  transcriptionExpectation: $('#transcriptionExpectation'), cancelTranscription: $('#cancelTranscription'),
   infoNotice: $('#infoNotice'), workspace: $('#workspace'), previewPanel: $('.preview-panel'), previewStage: $('#previewStage'),
   previewCanvas: $('#previewCanvas'), previewResolution: $('.preview-resolution'), previewEmpty: $('#previewEmpty'), sourceVideo: $('#sourceVideo'),
   playButton: $('#playButton'), timeSlider: $('#timeSlider'), timeReadout: $('#timeReadout'),
@@ -139,7 +141,7 @@ function completeStage(name) {
   if (index >= 0) elements.stageItems[index].classList.add('is-done');
   if (index >= 0) elements.stageItems[index].classList.remove('is-active');
 }
-function setProgress(label, value = 0) {
+function setProgress(label, value = 0, { mirrorToRender = true } = {}) {
   const percent = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
   elements.taskProgress.hidden = false;
   elements.progressLabel.textContent = label;
@@ -150,7 +152,7 @@ function setProgress(label, value = 0) {
   // Mirror into the render panel. The workflow panel sits above the editor, so a
   // long render used to leave the box the user just clicked showing nothing but a
   // disabled button.
-  if (elements.renderProgress && renderPanelProgressActive) {
+  if (elements.renderProgress && renderPanelProgressActive && mirrorToRender) {
     elements.renderProgress.hidden = false;
     elements.renderProgressLabel.textContent = label;
     elements.renderProgressPercent.textContent = `${percent}%`;
@@ -730,10 +732,12 @@ async function startWorkflow() {
     showError('Choose a supported transcription model: base.en or small.en.');
     return;
   }
+  const workspaceWasHidden = elements.workspace.hidden;
   clearNotices();
-  removeRenderDownload();
   elements.startButton.disabled = true;
   elements.workspace.hidden = true;
+  elements.cancelTranscription.hidden = true;
+  elements.transcriptionExpectation.hidden = true;
   setStage('decode');
   setWorkflowStatus('Decoding media');
   setProgress('Inspecting MP4 video…', 0);
@@ -767,15 +771,36 @@ async function startWorkflow() {
     completeStage('decode');
     setStage('transcribe');
     setWorkflowStatus('Transcribing words');
-    setProgress(`Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`, 0);
+    const transcriptionLabel = `Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`;
+    setProgress(transcriptionLabel, 0, { mirrorToRender: false });
     let result;
+    let transcriptionTimer = null;
+    let transcriptionStartedAt = 0;
     try {
       await workerAssets;
+      elements.transcriptionExpectation.hidden = !isLongClip(videoInfo.duration);
+      elements.cancelTranscription.hidden = false;
+      transcriptionStartedAt = Date.now();
+      const updateElapsed = () => {
+        const elapsed = formatElapsedTime((Date.now() - transcriptionStartedAt) / 1000);
+        const label = `${transcriptionLabel} ${elapsed} elapsed`;
+        elements.progressLabel.textContent = label;
+        elements.progressBar.setAttribute('aria-label', `${label}: ${elements.progressPercent.textContent}`);
+      };
+      updateElapsed();
+      transcriptionTimer = setInterval(updateElapsed, 1000);
       result = await transcribeAudio(audio.samples, {
         model,
-        onProgress: progress => setProgress(`Transcribing with ${elements.modelSelect.selectedOptions[0].text}…`, progressPercent(progress)),
+        onProgress: progress => setProgress(
+          `${transcriptionLabel} ${formatElapsedTime((Date.now() - transcriptionStartedAt) / 1000)} elapsed`,
+          progressPercent(progress),
+          { mirrorToRender: false },
+        ),
       });
     } finally {
+      if (transcriptionTimer !== null) clearInterval(transcriptionTimer);
+      elements.cancelTranscription.hidden = true;
+      elements.transcriptionExpectation.hidden = true;
       // Release the model and its runtime buffers the moment the words are in.
       // The transcript is plain data from here on, so nothing needs the model
       // again until the next run.
@@ -787,6 +812,7 @@ async function startWorkflow() {
     transcript = { ...result, words: result.words.map(word => ({ ...word, text: String(word.text).trim(), start: Number(word.start), end: Number(word.end) })) };
     transcript.words = transcript.words.filter(word => word.text && Number.isFinite(word.start) && Number.isFinite(word.end) && word.end > word.start);
     if (!transcript.words.length) throw new Error('Transcription returned invalid word timings; no captions can be built.');
+    removeRenderDownload();
     completeStage('transcribe');
     groups = groupWords(transcript.words, style);
     updateGroupList();
@@ -803,6 +829,11 @@ async function startWorkflow() {
     drawPreview();
   } catch (error) {
     elements.startButton.disabled = false;
+    if (error?.cancelled) {
+      elements.workspace.hidden = workspaceWasHidden;
+      setWorkflowStatus('Transcription cancelled');
+      return;
+    }
     setWorkflowStatus('Could not process this video');
     showError(formatVideoProcessingError(error, decodeFailure));
   }
@@ -971,6 +1002,7 @@ function installEvents() {
   }));
   elements.dropZone.addEventListener('drop', event => setSelectedFile(event.dataTransfer?.files?.[0]));
   elements.startButton.addEventListener('click', startWorkflow);
+  elements.cancelTranscription.addEventListener('click', () => cancelTranscription());
   elements.applyTranscriptText.addEventListener('click', applyTranscriptEdit);
   elements.revertTranscriptText.addEventListener('click', revertTranscriptEdit);
   elements.playButton.addEventListener('click', async () => {
